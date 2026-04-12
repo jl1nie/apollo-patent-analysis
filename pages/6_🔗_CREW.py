@@ -416,19 +416,19 @@ CREW（共起関係探索ウェブ） は、発明者や出願人のつながり
 Mission Controlで計算されたベクトルを活用し、高速に解析を行います。
 """)
 
-# --- データ連携チェック ---
-df = None
-if st.session_state.get('shared_df') is not None:
-    df = st.session_state['shared_df']
-elif st.session_state.get('df_main') is not None:
-    df = st.session_state['df_main']
+# --- データ連携チェック (統一ゲート経由で非同期ジョブの進捗も表示される) ---
+if not utils.require_preprocess_or_wait():
+    st.stop()
+
+df = st.session_state.get('shared_df') or st.session_state.get('df_main')
+if df is not None and st.session_state.get('shared_df') is None:
     st.session_state['shared_df'] = df
 
 embeddings = st.session_state.get('sbert_embeddings')
-
 if df is None or embeddings is None:
-    st.error("⚠️ データまたはベクトル情報が読み込まれていません")
-    st.markdown("Mission Control に戻って「分析エンジン起動」を実行してください。")
+    # ここに到達するのは preprocess_done が True にもかかわらずデータが
+    # 壊れている異常系のみ。通常は require_preprocess_or_wait() でガード済み
+    st.error("⚠️ データまたはベクトル情報が読み込まれていません。Mission Control から再実行してください。")
     st.stop()
 
 # --- Analyzer初期化 ---

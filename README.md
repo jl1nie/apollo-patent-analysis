@@ -117,6 +117,8 @@ Environmental Analysis module that integrates non-patent literature (papers, new
 
 ## 🚀 How to Run (実行方法)
 
+### Hosted モード (Hugging Face Spaces / 個人利用)
+
 1.  Install dependencies:
     ```bash
     pip install -r requirements.txt
@@ -125,6 +127,53 @@ Environmental Analysis module that integrates non-patent literature (papers, new
     ```bash
     streamlit run Home.py
     ```
+
+ローカル SBERT (`paraphrase-multilingual-MiniLM-L12-v2`) と Google Gemini API を使用します。
+
+---
+
+## 🔒 APOLLO Private (オンプレ・完全エアギャップ版)
+
+特許データを外部 API に一切送信せず、**ローカル LLM (LM Studio / Ollama)** で
+すべての推論を完結させる Docker 配布版です。中小企業の知財部門など、
+社外秘特許データを扱う用途向けに設計されています。
+
+### 特徴
+
+- **完全ローカル推論**: 埋め込み (Qwen3-Embedding-4B 等) + チャット (Gemma 4 Vision 等) を OpenAI 互換エンドポイント経由で
+- **非同期埋め込みジョブ**: 大量特許 (数千〜数万件) の埋め込みをバックグラウンドで実行、ブラウザを閉じても継続
+- **ディスクキャッシュ**: 同じ CSV の 2 回目以降は即時利用可能
+- **マルチユーザー認証**: `streamlit-authenticator` + bcrypt (YAML ユーザーストア)
+- **Docker 配布**: `docker compose up` 一発で起動、永続化はマウントボリューム
+
+### クイックスタート
+
+```bash
+# LM Studio / Ollama で埋め込みモデルとチャットモデルをロード
+# 例: text-embedding-qwen3-embedding-4b + google/gemma-4-26b-a4b
+
+cd deploy/private
+cp .env.example .env                  # エンドポイント・モデル名を編集
+just hash-password                    # bcrypt ハッシュ生成
+cp users.example.yml "${APOLLO_DATA_DIR:-./apollo-data}/users/users.yml"
+# users.yml のパスワードハッシュと cookie.key を差し替え
+
+just up                               # または: docker compose up -d
+# http://localhost:8501 にアクセス
+```
+
+詳細は [`deploy/private/README.md`](deploy/private/README.md) を参照してください。
+
+### モード切替
+
+`APOLLO_MODE` 環境変数で hosted / private を切り替えます:
+
+| 値 | 挙動 |
+|---|---|
+| `hosted` (default) | ローカル SBERT + Google Gemini API、session_state のみ、認証なし |
+| `private` | LM Studio / Ollama 経由の推論、disk cache、非同期ジョブ、認証あり |
+
+既存 Hugging Face Spaces デプロイには一切影響しません。
 
 ---
 © 2025-2026 しばやま

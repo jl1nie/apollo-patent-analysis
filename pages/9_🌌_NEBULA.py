@@ -30,10 +30,9 @@ st.markdown("##### Network Exploration of Business, Users, Law, and Academia (En
 st.markdown("特許情報だけでなく、論文・ニュース・政策文書までを含めた「環境分析」を行うモジュールです。社会トレンドや市場の期待を統合し、特許データとのギャップやシナジーを可視化します。")
 
 # ==================================================================
-# --- データ準備 ---
+# --- データ準備 (共通ゲート経由) ---
 # ==================================================================
-if 'df_main' not in st.session_state or st.session_state.df_main is None:
-    st.warning("有効な特許データがありません。Homeモジュールでデータをアップロードしてください。")
+if not utils.require_preprocess_or_wait():
     st.stop()
 
 # 特許データのロード (Main)
