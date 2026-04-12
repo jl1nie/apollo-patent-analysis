@@ -1,0 +1,43 @@
+# APOLLO Private - ユーザー認証設定サンプル
+#
+# このファイルを元に `/var/lib/apollo/users/users.yml` を作成する。
+# パスワードは bcrypt ハッシュ化されたものを入れること。
+#
+# 1. ハッシュ生成:
+#     just hash-password
+#     (または)
+#     uv run --extra private python -c "import bcrypt, getpass; \
+#       print(bcrypt.hashpw(getpass.getpass('password: ').encode(), bcrypt.gensalt()).decode())"
+#
+# 2. 生成されたハッシュ (`$2b$12$...`) を `password:` フィールドに貼り付け
+#
+# 3. cookie.key は必ず `openssl rand -hex 32` で生成したランダム値に差し替えること
+#    （このサンプル値をそのまま本番で使わないこと）
+#
+# ==================================================================
+# デフォルトパスワード (サンプル、本番では必ず変更):
+#   admin    / apollo
+#   analyst1 / analyst
+# ==================================================================
+
+credentials:
+  usernames:
+    admin:
+      name: 管理者
+      email: admin@example.com
+      password: $2b$12$bKjTwBF2WmAq/DmkNi96Qujdwsy0W04GXtsQz9KwGL.Q5jAhFaMYC
+      roles:
+        - admin
+
+    analyst1:
+      name: 田中 太郎
+      email: tanaka@example.com
+      password: $2b$12$REwdUjj.bqK1jlM0FUzDzuD05kkpQjRrAcRvVZyiyGLVHHslxMLoW
+      roles:
+        - analyst
+
+cookie:
+  name: apollo_private_auth
+  # 本番では必ず `openssl rand -hex 32` で生成した値に差し替えること
+  key: REPLACE_ME_WITH_RANDOM_HEX_64_CHARS
+  expiry_days: 7

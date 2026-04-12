@@ -322,9 +322,26 @@ def require_preprocess_or_wait() -> bool:
 # --- 3. サイドバー設定 (共通) ---
 # ==================================================================
 def render_sidebar():
-    """共通サイドバーを描画する"""
+    """共通サイドバーを描画する。
 
-    
+    private モード時は以下の副作用を持つ:
+    - `apollo_config.ensure_directories()` で永続化ディレクトリを作成
+    - 未認証なら login form を描画して `st.stop()` する
+    - 認証済みならサイドバーに Private Edition バッジ + ユーザー名 +
+      ログアウトボタン + キャッシュ使用量を表示する
+
+    hosted モードでは既存の挙動（サイドバー nav のみ）を維持する。
+    """
+    import apollo_config
+
+    # private モード: ゲート処理
+    if apollo_config.IS_PRIVATE:
+        apollo_config.ensure_directories()
+        from services import auth as _auth
+
+        if not _auth.require_login():
+            st.stop()
+
     # 共通CSSの適用
     st.markdown("""
     <style>
@@ -363,9 +380,31 @@ def render_sidebar():
     """, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.title("APOLLO") 
+        st.title("APOLLO")
         st.markdown("Advanced Patent & Overall Landscape-analytics Logic Orbiter")
         st.markdown("**v6.0.1**")
+
+        # private モード: バッジ + ユーザー + ログアウトボタン
+        if apollo_config.IS_PRIVATE:
+            from services import auth as _auth
+
+            st.markdown("🔒 **Private Edition**")
+            current_user = _auth.get_current_user()
+            if current_user:
+                st.caption(f"👤 {current_user}")
+            _auth.logout_button(location="sidebar")
+
+            # キャッシュ使用量（エラーは無視）
+            try:
+                from services import storage as _storage
+
+                datasets = _storage.list_cached_datasets()
+                if datasets:
+                    total_mb = sum(d["size_mb"] for d in datasets)
+                    st.caption(f"💾 キャッシュ: {len(datasets)} 件 / {total_mb:.1f} MB")
+            except Exception:  # noqa: BLE001
+                pass
+
         st.markdown("---")
         st.subheader("Home"); st.page_link("Home.py", label="Mission Control", icon="🛰️")
         st.subheader("Modules")

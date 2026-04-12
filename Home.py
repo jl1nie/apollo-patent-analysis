@@ -22,6 +22,7 @@ import datetime
 from sklearn.feature_extraction.text import TfidfVectorizer
 from janome.tokenizer import Tokenizer
 
+import apollo_config
 from services.embeddings import get_embedding_backend
 from services import jobs as embedding_jobs
 
@@ -233,9 +234,9 @@ def smart_map_index(current_value, options, keywords):
 # --- メイン画面描画 ---
 # ==================================================================
 
-utils.render_sidebar()
+utils.render_sidebar()  # private モード時は内部で ensure_directories + ログインゲートを実行
 
-st.title("🛰️ Mission Control") 
+st.title("🛰️ Mission Control")
 st.markdown("ここは、全分析モジュールで共通のデータ準備を行う「ミッション・コントロール（データハブ）」です。")
 
 # --- アプリケーション初期化 ---
