@@ -245,6 +245,80 @@ def get_stopwords(mode="patent"):
         return get_patent_stopwords()
 
 # ==================================================================
+# --- 3. 前処理ゲート (共通) ---
+# ==================================================================
+def require_preprocess_or_wait() -> bool:
+    """分析ページの冒頭で呼ぶゲートヘルパー。
+
+    戻り値:
+        True  - 前処理完了済み、ページ本体を描画してよい
+        False - 未完了（未アップロード / ジョブ実行中 / エラー）、呼び出し側は
+                そのまま `st.stop()` するだけでよい。適切な UI はこのヘルパーが
+                内部で描画済み
+
+    UI の出し分け:
+    - preprocess_done が True            → 何も出さずに True 返す
+    - current_job_id あり & running     → `st.fragment(run_every=2s)` で進捗バー
+    - current_job_id あり & done         → "Mission Control に戻って完了してください" 案内
+    - current_job_id あり & error        → エラー表示
+    - どれにも該当しない                  → 従来の "アップロードしてください" 案内
+    """
+    import time as _time
+
+    if st.session_state.get("preprocess_done", False):
+        return True
+
+    job_id = st.session_state.get("current_job_id")
+    if job_id:
+        # 進行中ジョブあり。services.jobs 経由でステータス取得
+        try:
+            from services import jobs as _jobs
+        except Exception:  # noqa: BLE001
+            st.error("ジョブ管理モジュールの読み込みに失敗しました。")
+            return False
+
+        st.info("⏳ 前処理ジョブが進行中です。完了までお待ちください。")
+
+        @st.fragment(run_every="2s")
+        def _progress_fragment() -> None:
+            status = _jobs.read_status(job_id)
+            if not status:
+                st.warning("ジョブ情報が見つかりません。Mission Control で再実行してください。")
+                return
+            if status.state in ("pending", "running"):
+                st.progress(max(0.0, min(status.progress, 1.0)), text=status.message)
+                elapsed = int(_time.time() - status.started_at)
+                st.caption(f"経過時間: {elapsed}s")
+            elif status.state == "done":
+                st.success(f"✅ {status.message}")
+                st.info(
+                    "埋め込み計算は完了しました。"
+                    "Mission Control のタブを再度開くと残りの処理（TF-IDF・正規化）が自動的に実行され、"
+                    "各分析モジュールが利用可能になります。"
+                )
+                try:
+                    if st.button("🛰️ Mission Control へ移動", key="wait_to_home"):
+                        st.switch_page("Home.py")
+                except Exception:  # noqa: BLE001
+                    pass
+            elif status.state == "error":
+                st.error(f"エラー: {status.error or status.message}")
+                if st.button("再試行するため Mission Control へ", key="wait_err_to_home"):
+                    st.switch_page("Home.py")
+
+        _progress_fragment()
+        return False
+
+    # 未アップロード / ジョブなし
+    st.error("分析データがありません。")
+    st.warning(
+        "先に「Mission Control」（メインページ）でファイルをアップロードし、"
+        "「分析エンジン起動」を実行してください。"
+    )
+    return False
+
+
+# ==================================================================
 # --- 3. サイドバー設定 (共通) ---
 # ==================================================================
 def render_sidebar():

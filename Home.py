@@ -20,11 +20,10 @@ import time
 import datetime
 
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import normalize
 from janome.tokenizer import Tokenizer
 
-import apollo_config
 from services.embeddings import get_embedding_backend
+from services import jobs as embedding_jobs
 
 warnings.filterwarnings('ignore')
 
@@ -51,6 +50,84 @@ def load_tokenizer():
     return Tokenizer()
 
 t = load_tokenizer()
+
+
+def _run_post_embedding_phases():
+    """埋め込みジョブ完了後に呼ばれる後処理。
+
+    - session_state.sbert_embeddings が既にセットされている前提
+    - session_state.df_main は text_for_sbert カラムを含んでいる前提
+    - TF-IDF 計算、メタデータ正規化、最終クリーンアップを実行し、
+      preprocess_done = True まで持っていく
+
+    セッション状態だけを読み書きし、引数はとらない。Home.py の他の関数
+    （advanced_tokenize, robust_parse_date, extract_ipc）と t (Tokenizer)
+    を利用するので、モジュールレベル関数として定義している。
+    """
+    df = st.session_state.df_main
+    col_map = st.session_state.col_map
+    delimiters = st.session_state.delimiters
+
+    # Phase 5: TF-IDF & Keyword (特許のみ)
+    if "stopwords" in st.session_state and st.session_state["stopwords"]:
+        sw_list = st.session_state["stopwords"]
+    else:
+        sw_list = utils.get_stopwords()
+
+    df["explorer_keywords"] = df["text_for_sbert"].apply(
+        lambda x: utils.extract_keywords(x, t, sw_list)
+    )
+    df["text_for_tfidf"] = df["text_for_sbert"].apply(advanced_tokenize)
+    vectorizer = TfidfVectorizer(max_features=None, min_df=5, max_df=0.80)
+    st.session_state.tfidf_matrix = vectorizer.fit_transform(df["text_for_tfidf"])
+    st.session_state.feature_names = np.array(vectorizer.get_feature_names_out())
+
+    # Phase 6: メタデータ正規化 (日付・IPC・出願人・発明者・Fターム)
+    raw_dates = df[col_map["date"]].astype(str)
+    df["parsed_date"] = robust_parse_date(raw_dates)
+    df["year"] = df["parsed_date"].dt.year
+    df["app_num_main"] = df[col_map["app_num"]].astype(str).str.strip()
+
+    ipc_delimiter = delimiters["ipc"]
+    df["ipc_normalized"] = df[col_map["ipc"]].apply(lambda x: extract_ipc(x, ipc_delimiter))
+    ipc_raw_list = df[col_map["ipc"]].fillna("").astype(str).str.split(ipc_delimiter)
+    df["ipc_main_group"] = ipc_raw_list.apply(
+        lambda terms: list({t.strip().split("/")[0].strip().upper() for t in terms if t.strip()})
+    )
+
+    if col_map.get("fterm"):
+        fterm_delimiter = delimiters["fterm"]
+        fterm_raw_list = df[col_map["fterm"]].fillna("").astype(str).str.split(fterm_delimiter)
+        df["fterm_main"] = fterm_raw_list.apply(
+            lambda terms: list({t.strip()[:5].upper() for t in terms if t.strip() and len(t) >= 5})
+        )
+    else:
+        df["fterm_main"] = [[] for _ in range(len(df))]
+
+    applicant_delimiter = delimiters["applicant"]
+    applicant_raw_list = df[col_map["applicant"]].fillna("").astype(str).str.split(applicant_delimiter)
+    df["applicant_main"] = applicant_raw_list.apply(
+        lambda names: list({n.strip() for n in names if n.strip()})
+    )
+
+    if col_map.get("inventor") and col_map["inventor"] in df.columns:
+        inventor_delimiter = delimiters["inventor"]
+
+        def _clean_inventors(val):
+            if pd.isna(val):
+                return []
+            val = str(val).replace("▲", "").replace("▼", "").replace("　", "")
+            return list({n.strip() for n in val.split(inventor_delimiter) if n.strip()})
+
+        df["inventor_main"] = df[col_map["inventor"]].apply(_clean_inventors)
+    else:
+        df["inventor_main"] = [[] for _ in range(len(df))]
+
+    # 最終クリーンアップ
+    df.drop(columns=["text_for_sbert"], errors="ignore", inplace=True)
+    st.session_state.df_main = df
+    st.session_state.shared_df = df
+    st.session_state.preprocess_done = True
 
 def advanced_tokenize(text):
     # ストップワードを動的に取得
@@ -174,7 +251,8 @@ def initialize_session_state():
         "feature_names": None,
         "col_map": {},
         "delimiters": {'applicant': ';', 'inventor': ';', 'ipc': ';', 'fterm': ';', 'npl_category': ';'},
-        "preprocess_done": False
+        "preprocess_done": False,
+        "current_job_id": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -215,8 +293,10 @@ with container:
                     df = pd.read_excel(uploaded_file, dtype=str)
                 
                 st.session_state.df_main = df
-                st.session_state.preprocess_done = False 
-                st.session_state['shared_df'] = df  
+                st.session_state.preprocess_done = False
+                # 新しい CSV がアップロードされたので、古いジョブを破棄
+                st.session_state.current_job_id = None
+                st.session_state['shared_df'] = df
                 st.session_state['filename'] = uploaded_file.name
 
                 st.success(f"ファイル '{uploaded_file.name}' のインポート完了 ({len(df)}行)。")
@@ -804,91 +884,100 @@ with container:
                     
                     update_progress('text', 1.0)
 
-                    # 4. SBERTエンコード (Patent ONLY)
-                    status_text.markdown("🔄 **Phase 4/6: AIベクトル化 (SBERT - 特許のみ)...**")
+                    # df を session_state に保存（text_for_sbert カラムを含む）。
+                    # ポスト処理（fragment 側）で参照される
+                    st.session_state.df_main = df
+
+                    # Phase 4 以降は非同期ジョブで実行する。ボタンハンドラは
+                    # ジョブを投入して rerun し、以降は module-level の fragment
+                    # が状態遷移を駆動する
+                    status_text.markdown(
+                        "🔄 **Phase 4/6: AIベクトル化ジョブを起動中...**"
+                    )
                     texts_for_sbert_list = df['text_for_sbert'].tolist()
-                    batch_size = 128
-                    total_batches = (len(texts_for_sbert_list) + batch_size - 1) // batch_size
-                    embeddings_list = []
-                    
-                    for i in range(total_batches):
-                        batch_texts = texts_for_sbert_list[i*batch_size : (i+1)*batch_size]
-                        batch_embeddings = embedding_backend._encode_batch_raw(batch_texts)
-                        embeddings_list.append(batch_embeddings)
-                        
-                        phase_prog = (i + 1) / total_batches
-                        el_str, et_str = update_progress('sbert', phase_prog)
-                        status_text.markdown(f"🔄 **Phase 4/6: AIベクトル化 (SBERT) 実行中...** (Batch {i+1}/{total_batches})\n\n⏱️ 経過: {el_str} | ⏳ 残り: {et_str} (目安)")
-                    
-                    sbert_embeddings = np.vstack(embeddings_list)
-                    sbert_embeddings = normalize(sbert_embeddings, norm='l2')
-                    st.session_state.sbert_embeddings = sbert_embeddings
-
-                    # 5. TF-IDF & Keyword (Patent ONLY)
-                    status_text.markdown("🔄 **Phase 5/6: キーワード抽出 (TF-IDF - 特許のみ)...**")
-                    # Explorer用 (キーワードリスト)
-                    if 'stopwords' in st.session_state and st.session_state['stopwords']:
-                         sw_list = st.session_state['stopwords']
-                    else:
-                         sw_list = utils.get_stopwords()
-                    
-                    df['explorer_keywords'] = df['text_for_sbert'].apply(lambda x: utils.extract_keywords(x, t, sw_list))
-                    
-                    # 検索用 (TF-IDF行列)
-                    df['text_for_tfidf'] = df['text_for_sbert'].apply(advanced_tokenize)
-                    vectorizer = TfidfVectorizer(max_features=None, min_df=5, max_df=0.80)
-                    st.session_state.tfidf_matrix = vectorizer.fit_transform(df['text_for_tfidf'])
-                    st.session_state.feature_names = np.array(vectorizer.get_feature_names_out())
-                    update_progress('tfidf', 1.0)
-
-                    # 6. 正規化 (Patent Norm)
-                    status_text.markdown("🔄 **Phase 6/6: メタデータ (日付・IPC・出願人) 正規化中...**")
-                    raw_dates = df[col_map['date']].astype(str)
-                    df['parsed_date'] = robust_parse_date(raw_dates)
-                    df['year'] = df['parsed_date'].dt.year
-                    df['app_num_main'] = df[col_map['app_num']].astype(str).str.strip()
-
-                    ipc_delimiter = delimiters['ipc']
-                    df['ipc_normalized'] = df[col_map['ipc']].apply(lambda x: extract_ipc(x, ipc_delimiter))
-                    ipc_raw_list = df[col_map['ipc']].fillna('').astype(str).str.split(ipc_delimiter)
-                    df['ipc_main_group'] = ipc_raw_list.apply(lambda terms: list(set([t.strip().split('/')[0].strip().upper() for t in terms if t.strip()])))
-
-                    if col_map['fterm']:
-                        fterm_delimiter = delimiters['fterm']
-                        fterm_raw_list = df[col_map['fterm']].fillna('').astype(str).str.split(fterm_delimiter)
-                        df['fterm_main'] = fterm_raw_list.apply(lambda terms: list(set([t.strip()[:5].upper() for t in terms if t.strip() and len(t) >= 5])))
-                    else:
-                        df['fterm_main'] = [[] for _ in range(len(df))]
-
-                    applicant_delimiter = delimiters['applicant']
-                    applicant_raw_list = df[col_map['applicant']].fillna('').astype(str).str.split(applicant_delimiter)
-                    df['applicant_main'] = applicant_raw_list.apply(lambda names: list(set([n.strip() for n in names if n.strip()])))
-                    
-                    if col_map['inventor'] and col_map['inventor'] in df.columns:
-                        inventor_delimiter = delimiters['inventor']
-                        def clean_inventors(val):
-                            if pd.isna(val): return []
-                            val = str(val).replace('▲', '').replace('▼', '').replace('　', '')
-                            return list(set([n.strip() for n in val.split(inventor_delimiter) if n.strip()]))
-                        df['inventor_main'] = df[col_map['inventor']].apply(clean_inventors)
-                    else:
-                        df['inventor_main'] = [[] for _ in range(len(df))]
-                    update_progress('norm', 1.0)
-                    
-                    # 6. クリーンアップ (Clean)
-                    status_text.markdown("🔄 **Phase 6/6: 最終処理中...**")
-                    df.drop(columns=['text_for_sbert'], errors='ignore', inplace=True)
-                    st.session_state.df_main = df 
-                    st.session_state.shared_df = df 
-                    st.session_state.preprocess_done = True
-                    update_progress('clean', 1.0)
-                    
-                    # 完了
-                    progress_bar.progress(1.0)
-                    status_text.success(f"✅ 分析エンジン起動完了 (所要時間: {int(time.time() - start_time)}秒)")
-                    st.info("サイドバーのナビゲーションから分析モジュールを選択し、ミッションを開始してください。")
+                    job_id = embedding_jobs.start_embedding_job(
+                        texts=texts_for_sbert_list,
+                        source_name=st.session_state.filename,
+                        backend=embedding_backend,
+                    )
+                    st.session_state.current_job_id = job_id
+                    st.session_state.preprocess_done = False
+                    progress_bar.progress(0.15)
+                    status_text.success(
+                        f"✅ 埋め込みジョブを起動しました (job_id: {job_id[:8]}...)。"
+                        " 進捗は下のステータスパネルで確認できます。"
+                        " 他のページに遷移しても処理は継続されます。"
+                    )
+                    st.rerun()
 
                 except Exception as e:
                     st.error(f"前処理中にエラーが発生しました: {e}")
                     import traceback
                     st.exception(traceback.format_exc())
+
+
+# ==================================================================
+# --- 非同期ジョブ進捗パネル（module level） ---
+# ==================================================================
+# ボタンハンドラを抜けた後、進行中ジョブがあれば進捗をポーリング表示する。
+# 完了を検知したら自動的にポスト処理 (TF-IDF + メタデータ正規化) を走らせて
+# preprocess_done = True まで持っていく。
+if st.session_state.get("current_job_id"):
+    st.markdown("---")
+    st.markdown("### 🛰️ 分析エンジン ジョブステータス")
+
+    @st.fragment(run_every="2s")
+    def _home_job_status_fragment() -> None:
+        job_id = st.session_state.get("current_job_id")
+        if not job_id:
+            return
+        status = embedding_jobs.read_status(job_id)
+        if not status:
+            st.warning(
+                f"ジョブ {job_id[:8]}... のステータスが見つかりません。再実行してください。"
+            )
+            if st.button("ジョブをクリア", key="clear_missing_job"):
+                st.session_state.current_job_id = None
+                st.rerun()
+            return
+
+        if status.state in ("pending", "running"):
+            st.progress(max(0.0, min(status.progress, 1.0)), text=status.message)
+            elapsed = int(time.time() - status.started_at)
+            st.caption(
+                f"経過時間: {elapsed}s / 件数: {status.total} / job_id: {job_id[:8]}..."
+            )
+        elif status.state == "done":
+            # 埋め込みをキャッシュから復元 → ポスト処理 → preprocess_done
+            try:
+                backend = get_embedding_backend()
+                embeddings = backend.load_from_cache(status.cache_key)
+                if embeddings is None:
+                    st.error(
+                        "埋め込みキャッシュが見つかりません。Mission Control で再実行してください。"
+                    )
+                    st.session_state.current_job_id = None
+                    return
+                st.session_state.sbert_embeddings = embeddings
+                with st.spinner("TF-IDF とメタデータの正規化を実行中..."):
+                    _run_post_embedding_phases()
+                st.session_state.current_job_id = None
+                st.success(
+                    f"✅ 前処理完了 ({embeddings.shape[0]} 件, "
+                    f"{embeddings.shape[1]} 次元)。サイドバーから分析モジュールを選んで"
+                    "ミッションを開始してください。"
+                )
+                # 次の rerun で fragment 表示が消えるよう全体を rerun
+                st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"ポスト処理に失敗しました: {e}")
+                import traceback
+
+                st.exception(traceback.format_exc())
+        elif status.state == "error":
+            st.error(f"埋め込みエラー: {status.error or status.message}")
+            if st.button("エラーをクリアして再実行準備", key="clear_err_job"):
+                st.session_state.current_job_id = None
+                st.rerun()
+
+    _home_job_status_fragment()

@@ -266,9 +266,7 @@ st.markdown(f"<style>{theme_config['css']}</style>", unsafe_allow_html=True)
 # ==================================================================
 # --- 7. データロード & 初期化 ---
 # ==================================================================
-if not st.session_state.get("preprocess_done", False):
-    st.error("分析データがありません。")
-    st.warning("先に「Mission Control」（メインページ）でファイルをアップロードし、「分析エンジン起動」を実行してください。")
+if not utils.require_preprocess_or_wait():
     st.stop()
 else:
     df_main = st.session_state.df_main

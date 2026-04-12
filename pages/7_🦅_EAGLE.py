@@ -204,8 +204,7 @@ def update_hover_text_eagle(df, col_map, labels_map=None, cluster_col='eagle_clu
     return hover_texts
 
 # データ読み込み
-if not st.session_state.get("preprocess_done", False):
-    st.error("分析データがありません。Mission Controlでデータをロードしてください。")
+if not utils.require_preprocess_or_wait():
     st.stop()
 
 df_main = st.session_state.df_main

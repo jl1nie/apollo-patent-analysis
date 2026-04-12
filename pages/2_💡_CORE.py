@@ -245,8 +245,8 @@ with col_theme:
 theme_config = utils.get_theme_config(selected_theme)
 st.markdown(f"<style>{theme_config['css']}</style>", unsafe_allow_html=True)
 
-if not st.session_state.get("preprocess_done", False):
-    st.error("分析データがありません。"); st.stop()
+if not utils.require_preprocess_or_wait():
+    st.stop()
 else:
     df_main = st.session_state.df_main
     col_map = st.session_state.col_map
