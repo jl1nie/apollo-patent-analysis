@@ -1,0 +1,33 @@
+# Git / CI
+.git/
+.github/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+.python-version
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# ローカル環境
+.env
+.envrc
+apollo-data/
+
+# エディタ / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# プロジェクト固有（内部資料、コンテナに含めない）
+.serena/
+.claude/
+CLAUDE.md

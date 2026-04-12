@@ -1,0 +1,63 @@
+[project]
+name = "apollo-patent-analysis"
+version = "6.1.0"
+description = "APOLLO — Advanced Patent & Overall Landscape-analytics Logic Orbiter"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "しばやま" }]
+
+# コア依存: hosted / private どちらのモードでも必要なもの
+# （sentence-transformers と google-generativeai は optional extras に分離して
+#  private モードの Docker イメージに torch / Gemini SDK を含めないようにする）
+dependencies = [
+    "streamlit==1.41.1",
+    "pandas",
+    "numpy<2.0.0",
+    "scikit-learn",
+    "scipy",
+    "plotly",
+    "matplotlib",
+    "japanize-matplotlib",
+    "janome",
+    "umap-learn",
+    "hdbscan",
+    "wordcloud==1.9.4",
+    "networkx",
+    "openpyxl",
+    "setuptools",
+    "kaleido",
+    "Pillow",
+    "reportlab",
+]
+
+[project.optional-dependencies]
+# HF Spaces / hosted モード用: ローカル SBERT + Google Gemini
+hosted = [
+    "sentence-transformers",
+    "google-generativeai",
+]
+# オンプレ / private モード用: LM Studio 経由の OpenAI 互換 API + 認証
+private = [
+    "openai>=1.40.0",
+    "streamlit-authenticator>=0.3.2",
+    "bcrypt",
+    "PyYAML",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "apollo-data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501", "N806", "N803"]
+
+[tool.ruff.format]
+quote-style = "double"

@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Virtualenv / uv
+.venv/
+.env
+.envrc
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# APOLLO Private データマウント先
+apollo-data/
+/var/lib/apollo/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code / Serena ローカル状態
+.serena/
+.claude/

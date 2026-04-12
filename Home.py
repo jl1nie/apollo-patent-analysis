@@ -19,10 +19,12 @@ import re
 import time
 import datetime
 
-from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 from janome.tokenizer import Tokenizer
+
+import apollo_config
+from services.embeddings import get_embedding_backend
 
 warnings.filterwarnings('ignore')
 
@@ -43,10 +45,6 @@ st.set_page_config(
 import io
 
 import utils
-
-@st.cache_resource
-def load_sbert_model():
-    return SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
 @st.cache_resource
 def load_tokenizer():
@@ -171,7 +169,6 @@ def initialize_session_state():
         "shared_df": None,
         "filename": "No File",
         "npl_filename": "No File",
-        "sbert_model": None,
         "sbert_embeddings": None,
         "tfidf_matrix": None,
         "feature_names": None,
@@ -734,8 +731,8 @@ with container:
                     col_map = st.session_state.col_map
                     delimiters = st.session_state.delimiters
                     
-                    sbert_model = load_sbert_model()
-                    st.session_state.sbert_model = sbert_model
+                    # モード分岐: hosted → ローカル SBERT、private → LM Studio 経由 (Phase 2)
+                    embedding_backend = get_embedding_backend()
                     update_progress('init', 1.0)
                     # 2. 特許データの前処理
                     status_text.markdown("🔄 **Phase 2/6: 特許データの前処理中...**")
@@ -816,7 +813,7 @@ with container:
                     
                     for i in range(total_batches):
                         batch_texts = texts_for_sbert_list[i*batch_size : (i+1)*batch_size]
-                        batch_embeddings = sbert_model.encode(batch_texts, show_progress_bar=False)
+                        batch_embeddings = embedding_backend._encode_batch_raw(batch_texts)
                         embeddings_list.append(batch_embeddings)
                         
                         phase_prog = (i + 1) / total_batches
