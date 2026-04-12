@@ -30,8 +30,10 @@ LM_STUDIO_BASE_URL: str = os.environ.get(
 )
 LM_STUDIO_API_KEY: str = os.environ.get("LM_STUDIO_API_KEY", "dummy")
 
-EMBEDDING_MODEL: str = os.environ.get("APOLLO_EMBEDDING_MODEL", "qwen3-embedding-4b")
-CHAT_MODEL: str = os.environ.get("APOLLO_CHAT_MODEL", "gemma-4-vision-instruct")
+EMBEDDING_MODEL: str = os.environ.get(
+    "APOLLO_EMBEDDING_MODEL", "text-embedding-qwen3-embedding-4b"
+)
+CHAT_MODEL: str = os.environ.get("APOLLO_CHAT_MODEL", "google/gemma-4-26b-a4b")
 
 
 def ensure_directories() -> None:

@@ -100,24 +100,42 @@ class SBERTBackend:
 
 
 class LMStudioBackend:
-    """private モード用: OpenAI 互換エンドポイント（LM Studio）経由の埋め込み。
+    """private モード用: OpenAI 互換エンドポイント経由の埋め込み。
 
-    Phase 2 で実装する。現時点ではインスタンス化時に `NotImplementedError`
-    を投げる。
+    LM Studio, Ollama, vLLM, llama.cpp-server など `/v1/embeddings` を
+    提供する任意の OpenAI 互換サーバで動作する。`APOLLO_EMBEDDING_MODEL` と
+    `LM_STUDIO_BASE_URL` はそれぞれの環境に合わせて .env で設定する。
+
+    返却ベクトルの次元はロードされているモデル依存（Qwen3-Embedding-4B なら
+    2560 次元、MiniLM なら 384 次元など）。L2 正規化は呼び出し側の
+    `encode_batch()` が一括で実行する。
     """
 
-    model_id: str = "lmstudio-placeholder"
-
     def __init__(self) -> None:
-        raise NotImplementedError(
-            "LMStudioBackend は Phase 2 で実装予定です。現時点では APOLLO_MODE=hosted で起動してください。"
+        # 遅延 import: hosted モードでは openai パッケージが入っていない
+        from openai import OpenAI
+
+        self.model_id = apollo_config.EMBEDDING_MODEL
+        self._client = OpenAI(
+            api_key=apollo_config.LM_STUDIO_API_KEY,
+            base_url=apollo_config.LM_STUDIO_BASE_URL,
         )
 
     def _encode_batch_raw(self, batch: list[str]) -> np.ndarray:
-        raise NotImplementedError
+        # OpenAI 互換: POST /v1/embeddings
+        # LM Studio / Ollama は `input` に配列を受け付けてバッチ返却
+        response = self._client.embeddings.create(model=self.model_id, input=batch)
+        vectors = [d.embedding for d in response.data]
+        return np.asarray(vectors, dtype=np.float32)
 
     def encode_batch(self, texts: list[str], batch_size: int = 128) -> np.ndarray:
-        raise NotImplementedError
+        embeddings_list: list[np.ndarray] = []
+        total = len(texts)
+        for i in range(0, total, batch_size):
+            batch = texts[i : i + batch_size]
+            embeddings_list.append(self._encode_batch_raw(batch))
+        arr = np.vstack(embeddings_list)
+        return normalize(arr, norm="l2")
 
     def compute_cache_key(self, texts: list[str], source_name: str) -> str:
         return _hash_texts(texts, source_name, self.model_id)

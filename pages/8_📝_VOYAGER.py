@@ -6,95 +6,8 @@ import matplotlib.pyplot as plt
 import japanize_matplotlib
 import pdf_generator
 
-# ライブラリの動的インポート (エラーハンドリング用)
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
-
-# ==================================================================
-# --- クラス定義: LLM Client ---
-# ==================================================================
-class LLMClient:
-    def __init__(self, provider, api_key, model_name=None):
-        self.provider = provider
-        self.api_key = api_key
-        self.model_name = model_name
-        self.error_msg = None
-
-        if not self.api_key:
-            self.error_msg = "API Keyが設定されていません。"
-            return
-
-        if self.provider == "Google Gemini":
-            if genai is None:
-                self.error_msg = "google-generativeai ライブラリがインストールされていません。"
-            else:
-                genai.configure(api_key=self.api_key)
-                if not self.model_name: self.model_name = "gemini-1.5-pro"
-        else:
-            self.error_msg = f"未サポートのプロバイダ: {self.provider}"
-
-    def generate_text(self, system_prompt, user_prompt, images=None):
-        if self.error_msg:
-            raise ValueError(self.error_msg)
-
-        import time
-        import re
-        import io
-        from PIL import Image
-
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(max_retries):
-            try:
-                if self.provider == "Google Gemini":
-                    model = genai.GenerativeModel(self.model_name)
-                    # Gemini 1.5 Pro以降のモデル対応
-                    full_prompt = f"【System Instructions】\n{system_prompt}\n\n【User Request】\n{user_prompt}"
-                    
-                    if images and isinstance(images, list) and len(images) > 0:
-                        content_parts = [full_prompt]
-                        for img_bytes in images:
-                            try:
-                                if img_bytes:
-                                    pil_img = Image.open(io.BytesIO(img_bytes))
-                                    content_parts.append(pil_img)
-                            except Exception as e:
-                                print(f"Image load error in LLMClient: {e}")
-                        
-                        response = model.generate_content(content_parts)
-                    else:
-                        response = model.generate_content(full_prompt)
-                        
-                    return response.text
-
-            except Exception as e:
-                error_str = str(e)
-                last_error = e
-                        # レート制限 (429) またはクォータ超過のチェック
-                if "429" in error_str or "Quota exceeded" in error_str or "Resource has been exhausted" in error_str:
-                    if attempt < max_retries - 1:
-                        wait_time = 60 # 安全なデフォルト値
-                        # エラーメッセージから待機時間をパース
-                        match = re.search(r'retry in (\d+(\.\d+)?)s', error_str)
-                        if match:
-                            wait_time = float(match.group(1)) + 10 # 10秒のバッファを追加
-                        
-                        st.toast(f"⏳ レート制限に達しました。{int(wait_time)}秒後に再試行します... ({attempt+1}/{max_retries})", icon="⚠️")
-                        
-                        # 待機中にプログレスバーを使用するか、単純にスリープ
-                        with st.empty():
-                            for i in range(int(wait_time), 0, -1):
-                                st.write(f"⚠️ API制限に達しました。再試行まであと {i} 秒待機中...")
-                                time.sleep(1)
-                        continue
-                
-                # リトライ不可能なエラーまたは最大試行回数に到達
-                break
-        
-        raise RuntimeError(f"LLM Generation Failed: {last_error}")
+import apollo_config
+from services.llm import LLMClient, default_provider, default_model
 
 # ==================================================================
 # --- ページ設定 ---
@@ -114,60 +27,69 @@ st.markdown("""
 # --- サイドバー設定 (LLM設定) ---
 # ==================================================================
 
-with st.expander("⚙️ AIエンジン設定 (API Key)", expanded=True):
+with st.expander("⚙️ AIエンジン設定", expanded=True):
     col_key, col_model = st.columns([2, 1])
-    
-    # プロバイダはGoogle Geminiに固定
-    llm_provider = "Google Gemini"
-    
-    # APIキー処理
-    # 1. Secrets/Envの確認
-    api_key_env = None
-    env_key_name = "GOOGLE_API_KEY"
-    
-    # 1. OS環境変数から取得 (Hugging Face Spaces / Docker等でクラッシュしないよう優先)
-    api_key_env = os.environ.get(env_key_name)
 
-    # 2. st.secretsから取得 (Local Streamlit等、ファイルがある場合)
-    # Hugging Face Spaces (SPACE_IDがある環境) では secrets.toml は通常作成されないため、
-    # 明示的にスキップして不要なエラーログ (No secrets found) を回避する
-    is_hf_space = os.environ.get("SPACE_ID") is not None
+    # プロバイダはモードで自動決定
+    llm_provider = default_provider()
 
-    if not api_key_env and not is_hf_space:
-        try:
-            # st.secretsへのアクセス自体がエラーになる場合があるため、getを使用し、全例外をキャッチ
-            api_key_env = st.secrets.get(env_key_name)
-        except BaseException:
-            # secrets.tomlが存在しない、またはアクセスできない場合は無視
-            pass
-    
-    # セキュアキー処理ロジック
-    key_status_msg = ""
-    default_input_value = ""
-    
-    if api_key_env:
-        placeholder_text = "システムキー設定済み（空欄のままで使用可能）"
+    if apollo_config.IS_PRIVATE:
+        # --- private モード: LM Studio / Ollama 等のローカルエンドポイント ---
+        with col_key:
+            st.caption(f"🔒 Local LLM Endpoint: `{apollo_config.LM_STUDIO_BASE_URL}`")
+            st.caption("特許データは外部に送信されません。")
+        final_api_key = apollo_config.LM_STUDIO_API_KEY  # dummy でよい
+
+        with col_model:
+            # .env の APOLLO_CHAT_MODEL を既定値として表示。
+            # ユーザーが一時的に切り替えられるよう text_input で受ける。
+            llm_model = st.text_input(
+                "Chat Model",
+                value=apollo_config.CHAT_MODEL,
+                key="voyager_model_private",
+                help="LM Studio / Ollama 等にロード済みのチャット（ビジョン対応）モデル名",
+            )
     else:
-        placeholder_text = "AIza..."
+        # --- hosted モード: Google Gemini ---
+        api_key_env = None
+        env_key_name = "GOOGLE_API_KEY"
 
-    with col_key:
-        api_key_input = st.text_input(
-            "Google API Key", 
-            type="password", 
-            value="", # NEVER populate this with the secret
-            placeholder=placeholder_text,
-            help="Google AI Studioで取得したAPIキーを入力してください。システムキー設定済みの場合は空欄でOKです。"
-        )
-    
-    # 最終キー選択
-    final_api_key = api_key_input if api_key_input else api_key_env
+        # 1. OS環境変数から取得 (Hugging Face Spaces / Docker等でクラッシュしないよう優先)
+        api_key_env = os.environ.get(env_key_name)
 
-    with col_model:
-        # モデル選択
-        model_options = [
-            "gemini-2.5-flash"
-        ]
-        llm_model = st.selectbox("Model", model_options, key="voyager_model")
+        # 2. st.secretsから取得 (Local Streamlit等、ファイルがある場合)
+        # Hugging Face Spaces (SPACE_IDがある環境) では secrets.toml は通常作成されないため、
+        # 明示的にスキップして不要なエラーログ (No secrets found) を回避する
+        is_hf_space = os.environ.get("SPACE_ID") is not None
+
+        if not api_key_env and not is_hf_space:
+            try:
+                # st.secretsへのアクセス自体がエラーになる場合があるため、getを使用し、全例外をキャッチ
+                api_key_env = st.secrets.get(env_key_name)
+            except BaseException:
+                # secrets.tomlが存在しない、またはアクセスできない場合は無視
+                pass
+
+        if api_key_env:
+            placeholder_text = "システムキー設定済み（空欄のままで使用可能）"
+        else:
+            placeholder_text = "AIza..."
+
+        with col_key:
+            api_key_input = st.text_input(
+                "Google API Key",
+                type="password",
+                value="",  # NEVER populate this with the secret
+                placeholder=placeholder_text,
+                help="Google AI Studioで取得したAPIキーを入力してください。システムキー設定済みの場合は空欄でOKです。",
+            )
+
+        # 最終キー選択
+        final_api_key = api_key_input if api_key_input else api_key_env
+
+        with col_model:
+            model_options = ["gemini-2.5-flash"]
+            llm_model = st.selectbox("Model", model_options, key="voyager_model")
 
 
 # ==================================================================
