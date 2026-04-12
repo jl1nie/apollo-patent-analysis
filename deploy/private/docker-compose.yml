@@ -1,0 +1,42 @@
+# APOLLO Private — docker-compose 定義
+#
+# 前提:
+#   - LM Studio / Ollama 等の OpenAI 互換エンドポイントがホスト側で稼働
+#     していること（デフォルトは localhost:1234）
+#   - 同ディレクトリに .env を配置していること (.env.example を参照)
+#
+# 起動:
+#   cd deploy/private
+#   cp .env.example .env    # 初回のみ、値を編集
+#   docker compose up -d
+#
+# アクセス: http://localhost:8501
+
+services:
+  apollo:
+    image: jl1nie/apollo-private:latest
+    container_name: apollo-private
+    restart: unless-stopped
+
+    ports:
+      - "8501:8501"
+
+    volumes:
+      # ホスト側ディレクトリをマウント。ここに users.yml、埋め込みキャッシュ、
+      # ジョブ履歴が永続化される。APOLLO_DATA_DIR が未設定なら ./apollo-data
+      - ${APOLLO_DATA_DIR:-./apollo-data}:/var/lib/apollo
+
+    env_file:
+      - .env
+
+    # Linux 上の Docker でも `host.docker.internal` でホストを参照可能にする。
+    # Docker Desktop (Mac/Windows) ではデフォルトで解決できるので無害
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
