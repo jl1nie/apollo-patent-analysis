@@ -134,9 +134,44 @@ Environmental Analysis module that integrates non-patent literature (papers, new
 
 ## 🔒 APOLLO Private (オンプレ・完全エアギャップ版)
 
-**特許データを外部 API に一切送信せず、ローカル LLM で全推論を完結させる Docker 配布版**です。
-中小企業の知財部門・競合他社分析・未公開発明の整理など、**社外秘データを絶対に外に出せない**
-用途のために設計されています。
+中小企業の知財部門・競合他社分析・未公開発明の整理など、
+**社外秘データを絶対に外に出せない**用途のために設計された配布版です。
+
+### 💡 まず一番大事なこと（非エンジニアの方へ）
+
+APOLLO Private は、**アップロードした特許データが 100% お手元の PC / サーバの中に閉じた状態**で
+動きます。技術用語が多く見えるかもしれませんが、覚えていただきたいのはこの 4 点だけです。
+
+#### 1. 📁 アップロードしたデータは「あなたの PC の中のフォルダ」に保存されます
+
+- アップロードした CSV / Excel、計算された分析結果、AI が生成したレポートは
+  **すべてあなたの PC 上の `apollo-data` というフォルダ**に保存されます
+- このフォルダは **あなたの PC のハードディスクの一部**です。クラウドではありません
+- バックアップを取りたいときは、このフォルダをまるごと USB メモリや NAS にコピーするだけです
+- アンインストールしたいときは、このフォルダを削除すれば全データが消えます
+
+#### 2. 🚫 インターネット経由でデータが「外」に出ることはありません
+
+- AI 分析の処理も **あなたの PC（または社内 GPU マシン）の中だけで完結**します
+- Google や OpenAI に特許文面が送信される経路は**コード上に存在しません**
+- インターネット接続を切った状態でも動作します（エアギャップ運用）
+- Wireshark などで通信を監視しても、特許データが外部に送信されないことを確認できます
+
+#### 3. 💰 月額料金・API 利用料・アカウント登録は一切不要
+
+- Gemini や ChatGPT のような従量課金はありません
+- クラウドサービスへの登録も不要です
+- かかるのは **PC の電気代のみ**
+
+#### 4. 🐳 「Docker」は難しく考えなくて大丈夫
+
+- Docker は「**このアプリを箱に詰めて配布する仕組み**」のことです
+- エンジニアでなくても、セットアップ手順通りにコマンドを 3〜4 個打つだけで動きます
+- 一度起動すれば、あとはブラウザで http://localhost:8501 を開くだけ
+  （Web ブラウザを使えれば OK）
+- 詳しい手順は[「エンドユーザーマニュアル」](#-apollo-private--エンドユーザーマニュアル)で説明します
+
+---
 
 ### 🎯 なぜ Local LLM なのか
 
@@ -329,32 +364,81 @@ ollama pull qwen2.5vl           # チャット + Vision
 
 ### ステップ 2: APOLLO Private の起動
 
+初めての方は下記の順番通りに進めてください。コマンド（黒い画面に打ち込む文字）は
+そのままコピー＆ペーストすれば動きます。
+
+#### 2-1. プログラム一式をダウンロード
+
 ```bash
 git clone https://github.com/jl1nie/apollo-patent-analysis.git
 cd apollo-patent-analysis
 git checkout apollo-private
+```
 
-# 設定ファイルを準備
+> 📦 **これは何をしているの？** — GitHub から APOLLO のソースコード一式を
+> 自分の PC にコピーしています。`cd` で作業フォルダに入り、`checkout` で
+> Private 版を選んでいます。
+
+#### 2-2. 設定ファイルを作成
+
+```bash
 cp deploy/private/.env.example deploy/private/.env
-# deploy/private/.env をエディタで開いて以下を編集:
-#   LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1  (LM Studio の場合)
-#   APOLLO_EMBEDDING_MODEL=text-embedding-qwen3-embedding-4b
-#   APOLLO_CHAT_MODEL=google/gemma-4-26b-a4b
-#   APOLLO_COOKIE_SECRET=<openssl rand -hex 32 で生成した値>
+```
 
-# 管理者パスワードハッシュを生成
+次に `deploy/private/.env` をテキストエディタ（メモ帳、VS Code、vim 等）で開き、
+以下の 4 箇所を編集してください:
+
+| 設定名 | 値 | 説明 |
+|---|---|---|
+| `LM_STUDIO_BASE_URL` | `http://host.docker.internal:1234/v1` | LM Studio の場合そのまま |
+| `APOLLO_EMBEDDING_MODEL` | `text-embedding-qwen3-embedding-4b` | ステップ 1 でロードしたモデル名 |
+| `APOLLO_CHAT_MODEL` | `google/gemma-4-26b-a4b` | ステップ 1 でロードしたモデル名 |
+| `APOLLO_COOKIE_SECRET` | ランダムな 64 文字 | 下記コマンドで生成 |
+
+ランダム文字列の生成:
+```bash
+openssl rand -hex 32
+# → 64 文字のランダム文字列が出力される。それを .env にコピペ
+```
+
+#### 2-3. 管理者パスワードを設定
+
+```bash
 just hash-password
-# → プロンプトでパスワード入力 → bcrypt ハッシュが出力される
+```
 
-# ユーザー設定を配置
+パスワードを聞かれるので、**好きなパスワードを入力**してください（画面には表示されません）。
+`$2b$12$...` で始まる長い文字列が出力されます。**この文字列をあとで使うので覚えておいてください**。
+
+> 🔑 **これは何をしているの？** — 入力したパスワードを暗号化（ハッシュ化）して、
+> 安全な形で保存できるようにしています。元のパスワードは `apollo-data` フォルダには
+> 保存されません。
+
+#### 2-4. ユーザー登録ファイルを作成
+
+```bash
 mkdir -p ./apollo-data/users
 cp deploy/private/users.example.yml ./apollo-data/users/users.yml
-# users.yml をエディタで開いて password の値を上で生成したハッシュに差し替え
-# また cookie.key を .env の APOLLO_COOKIE_SECRET と同じ値にする
+```
 
-# コンテナ起動
+続けて `./apollo-data/users/users.yml` をテキストエディタで開き、以下 2 箇所を編集:
+
+1. `password:` の欄 → ステップ 2-3 で生成したハッシュ文字列に差し替え
+2. `cookie.key:` の欄 → ステップ 2-2 で生成したランダム文字列（.env と同じ値）に差し替え
+
+#### 2-5. APOLLO Private を起動
+
+```bash
 just up
-# または: docker compose -f deploy/private/docker-compose.yml up -d
+```
+
+> 🚀 **これは何をしているの？** — APOLLO Private を起動しています。初回は少し時間が
+> かかります（Docker という仕組みでパッケージ化されたプログラムが動き始めます）。
+> 画面が止まったように見えても焦らないでください。
+
+`just` がインストールされていない場合は、代わりに以下のコマンドでも OK:
+```bash
+docker compose -f deploy/private/docker-compose.yml up -d
 ```
 
 ### ステップ 3: ブラウザでアクセス
@@ -398,20 +482,60 @@ http://localhost:8501 を開く
 | 📝 **VOYAGER** | 戦略レポート生成 | `[[Evidence N]]` 付き LLM レポート |
 | 🌌 **NEBULA** | 環境分析（特許 + 論文） | Patent × NPL トレンド比較 |
 
-### ステップ 6: データ永続化の仕組み
+### ステップ 6: データはどこに保存されているのか（重要）
 
-`${APOLLO_DATA_DIR}` (デフォルト `./apollo-data`) 配下に以下が保存されます:
+**アップロードした CSV や分析結果は、あなたの PC の `apollo-data` フォルダに保存されます。**
 
 ```
-apollo-data/
-├── cache/embeddings/       ← SHA-256 キー付き埋め込みキャッシュ (.npy)
-├── jobs/                    ← 非同期ジョブの status.json
-├── users/users.yml          ← bcrypt 済みパスワード
-└── sessions/                ← （将来拡張用）
+apollo-data/                 ← このフォルダ全体があなたの PC 上にあります
+├── cache/embeddings/         ← 特許文面の AI 表現（ベクトル）キャッシュ
+├── jobs/                      ← 進行中・完了ジョブの状態ファイル
+└── users/users.yml            ← ログインアカウント情報（パスワードは暗号化済み）
 ```
 
-バックアップは `rsync -a apollo-data/ /backup/apollo/` で OK。
-全データをホスト側ファイルシステムで管理しているため、**ブラウザ側には秘密情報が一切保存されません**。
+#### データの流れ（通信経路図）
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  あなたの PC（または社内 GPU マシン）                          │
+│                                                                │
+│  ┌──────────────┐   ①CSV     ┌────────────────┐              │
+│  │              │ ──────────▶ │                │              │
+│  │ Web ブラウザ │              │  APOLLO        │              │
+│  │              │ ◀────────── │  (Docker)      │              │
+│  └──────────────┘   ③分析結果  └─┬──────────┬──┘              │
+│                                   │          │                 │
+│                           ②埋め込み│          │④保存           │
+│                                   ▼          ▼                 │
+│                            ┌──────────┐  ┌────────────┐       │
+│                            │ LM Studio│  │ apollo-data│       │
+│                            │ (GPU)    │  │  フォルダ  │       │
+│                            └──────────┘  └────────────┘       │
+│                                                                │
+└───────────────────────────────────────────────────────────────┘
+
+                            ╳  ← インターネットには一切出ない
+```
+
+**重要ポイント:**
+- ① CSV アップロード時は「あなたの PC → あなたの PC」の通信のみ（ネット不要）
+- ② AI 処理もあなたの PC の中だけで完結
+- ③ 分析結果表示もローカル Web ブラウザとローカルサーバ間のみ
+- ④ データは `apollo-data` フォルダに保存（あなたの PC のハードディスク上）
+
+#### バックアップ・削除・移行
+
+**バックアップしたいとき:**
+- `apollo-data` フォルダを USB メモリや NAS にコピーするだけ
+- コマンド例: `cp -r apollo-data /mnt/usb/apollo-backup-2026-04-13`
+
+**別の PC に移行したいとき:**
+- `apollo-data` フォルダを新しい PC にコピーし、同じ手順で APOLLO Private をセットアップ
+
+**アンインストールしたいとき:**
+- `docker compose down` でコンテナ停止
+- `apollo-data` フォルダを削除 → **完全消去完了**
+- クラウドにデータが残る心配はありません
 
 ### よくあるトラブル
 
