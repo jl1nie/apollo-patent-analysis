@@ -81,6 +81,24 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def _migrate_session_index(default_id: str) -> bool:
+    """sessions/index.json → projects/default/state/.index.json にコピー。
+
+    v7.1 では index を project-scoped にするため、v7.0 のフラットな index を
+    そのまま default プロジェクト配下にコピーする (全エントリが v7.0 では
+    patent label しか無かった前提。label フィールドは保持)。
+
+    戻り値: コピーが行われたら True。
+    """
+    old_index = apollo_config.SESSION_DIR / "index.json"
+    new_index = projects.project_state_dir(default_id) / ".index.json"
+    if not old_index.exists() or new_index.exists():
+        return False
+    new_index.parent.mkdir(parents=True, exist_ok=True)
+    _link_or_copy(old_index, new_index)
+    return True
+
+
 def _migrate_state_pkls(default_id: str) -> int:
     """sessions/patent/*.pkl → projects/default/state/ にハードリンク。
 
@@ -142,6 +160,7 @@ def migrate_if_needed() -> dict:
         "ran": False,
         "state_migrated": 0,
         "files_migrated": 0,
+        "index_migrated": False,
         "default_created": False,
     }
     if not apollo_config.IS_PRIVATE:
@@ -159,7 +178,7 @@ def migrate_if_needed() -> dict:
     default_id = projects.ensure_default_project()
     summary["default_created"] = not existed
 
-    # pkl / 入力ファイル移行
+    # pkl / 入力ファイル / session_index.json の移行
     try:
         summary["state_migrated"] = _migrate_state_pkls(default_id)
     except Exception:  # noqa: BLE001
@@ -169,6 +188,10 @@ def migrate_if_needed() -> dict:
         summary["files_migrated"] = _migrate_input_files(default_id)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        summary["index_migrated"] = _migrate_session_index(default_id)
+    except Exception:  # noqa: BLE001
+        summary["index_migrated"] = False
 
     # sentinel を立てる (これ以降はこの関数は no-op)
     sentinel.parent.mkdir(parents=True, exist_ok=True)

@@ -31,11 +31,32 @@ import apollo_config
 VALID_LABELS = ("patent", "academic", "news", "policy", "market")
 VALID_EXTENSIONS = (".csv", ".xlsx", ".xls")
 
+# v7.1: server_files の label → projects/<active>/files/<kind>/ のサブディレクトリ名
+# 対応 (patent だけ複数形に変わる)
+_LABEL_TO_KIND = {
+    "patent": "patents",
+    "academic": "academic",
+    "news": "news",
+    "market": "market",
+    "policy": "policy",
+}
+
 
 def _label_dir(label: str) -> Path:
+    """v7.1: アクティブプロジェクト配下 `projects/<active>/files/<kind>/` を返す。
+
+    hosted モードや projects import 失敗時は旧 v7.0 パス `inputs/<label>/` に
+    フォールバックする (保険)。
+    """
     if label not in VALID_LABELS:
         raise ValueError(f"unknown label: {label}")
-    return apollo_config.INPUTS_DIR / label
+    try:
+        from services import projects
+
+        kind = _LABEL_TO_KIND[label]
+        return projects.project_files_dir(kind)
+    except Exception:  # noqa: BLE001
+        return apollo_config.INPUTS_DIR / label
 
 
 def _ensure_label_dir(label: str) -> Path:

@@ -73,9 +73,15 @@ def _safe_filename(name: str) -> str:
 
 
 def _state_path_by_key(label: str, content_key: str) -> Path:
-    """sessions/{label}/{content_key}.pkl"""
-    sub = LABEL_DIRS.get(label, label)
-    return apollo_config.SESSION_DIR / sub / f"{content_key}.pkl"
+    """projects/<active>/state/{content_key}.pkl (v7.1)
+
+    v7.1 からベクトル空間はプロジェクト単位で分離されるため、label サブディレクトリ
+    は廃止。下位互換のため引数の `label` は受け取るが使わない (将来 NEBULA 独立
+    state 保存で再利用する余地を残す)。
+    """
+    from services import projects
+
+    return projects.project_state_dir() / f"{content_key}.pkl"
 
 
 def save_state_by_key(

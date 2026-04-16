@@ -106,8 +106,21 @@ def compute_content_key(
 
 
 def session_index_path() -> Path:
-    """sessions/index.json のパス。private モード以外では参照されても無害。"""
-    return apollo_config.SESSION_DIR / "index.json"
+    """session index (content_key → metadata) のパス。
+
+    v7.1 以降: アクティブプロジェクト内 `projects/<active>/state/.index.json`。
+    プロジェクト単位でベクトル空間が分離されるので、index も project-scoped。
+
+    hosted モード / private 初期化前でも path 計算は行う (実 I/O は callers の
+    `IS_PRIVATE` ガード下で行われる)。
+    """
+    try:
+        from services import projects
+
+        return projects.project_state_dir() / ".index.json"
+    except Exception:  # noqa: BLE001
+        # projects import 失敗時は旧 v7.0 パスにフォールバック (保険)
+        return apollo_config.SESSION_DIR / "index.json"
 
 
 def load_session_index() -> dict:
