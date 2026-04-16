@@ -790,9 +790,18 @@ Layer 4 — 提言 (Recommendation): 洞察に基づく具体的アクション�
 上記のエビデンスとCAPCOMデータに基づき、{mod}モジュールの分析結果を4層モデルで詳細に記述してください。
 CAPCOMデータにクラスタ動態マップ（cluster_dynamics）、ノイズ分析（noise_analysis）、多様性指標（entropy/gini）、学術クラスタ（nebula_academic_clusters）、空間配置（spatial_context）等がある場合は必ず言及すること。"""
 
+            # v7.1: このモジュールの全 snapshot 画像を集めて multimodal で送る
+            module_images = []
+            for _eid, _s in snaps_group:
+                if _s.get('images'):
+                    module_images.extend(_s['images'])
+                elif _s.get('image'):
+                    module_images.append(_s['image'])
+
             result = client.generate_text(
                 system_prompt=analyst_system,
                 user_prompt=analyst_prompt,
+                images=module_images if module_images else None,
             )
             analyst_results[mod] = result
 
