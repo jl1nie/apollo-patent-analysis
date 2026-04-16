@@ -23,16 +23,17 @@ import apollo_config
 
 
 def render_patent_picker_section() -> None:
-    """特許タブの最上部に表示する「サーバ保存ファイル」picker。
+    """特許タブの最上部に表示するプロジェクトダッシュボード + サーバファイル picker。
 
-    - 上段: 内容ハッシュ (`content_key`) ベースの前処理キャッシュ一覧テーブル
-      ({ファイル × モデル} のマトリクス表示、復元 / 削除ボタン付き)
-    - 下段: named volume 内の CSV ファイル単体 picker (新規 CSV を読み込む用途)
+    v7.1 からは以下を 1 つの expander にまとめる:
+    - プロジェクトサマリ (名前・埋め込みモデル・Mission Objective・作成日)
+    - タブ別詳細 (Files / Snapshots / CAPCOM Data / Reports)
+    - サーバ保存ファイルからのロード UI (従来機能を維持)
     """
     if not apollo_config.IS_PRIVATE:
         return
 
-    _render_cache_index_table()
+    _render_project_dashboard()
 
     from services import server_files as srv
     from services import analysis_state as st_state
@@ -239,6 +240,194 @@ def persist_analysis_state(
 # ==================================================================
 
 
+def _render_project_dashboard() -> None:
+    """アクティブプロジェクトの全体サマリ + タブ別詳細を描画する。"""
+    from services import projects
+
+    active = projects.get_active()
+    cfg = projects.get_config(active)
+    if not cfg:
+        # default が未作成 (起動直後など) なら skip — migration が次回で埋める
+        return
+
+    name = cfg.get("name", active)
+    embed_model = cfg.get("embedding_model", "?")
+    mission = cfg.get("mission_objective", "")
+    created_at = cfg.get("created_at", "")[:10]
+    updated_at = cfg.get("updated_at", "")
+
+    header = f"📂 プロジェクト: {name}  |  埋め込み: `{embed_model}`"
+    with st.expander(header, expanded=True):
+        c1, c2, c3 = st.columns([2, 2, 3])
+        c1.caption(f"作成: {created_at}")
+        c2.caption(f"最終更新: {_relative_time(_parse_iso(updated_at))}")
+        c3.caption(f"📁 ファイル: {cfg.get('file_count', '-')} / 🧪 state: {cfg.get('state_count', '-')}")
+
+        new_mission = st.text_area(
+            "Mission Objective",
+            value=mission,
+            key=f"proj_mission_{active}",
+            height=70,
+            help="プロジェクトの目的。VOYAGER レポート生成時の Mission Objective の既定値になります。",
+        )
+        if new_mission != mission and st.button(
+            "💾 Mission Objective を保存",
+            key=f"save_mission_{active}",
+            use_container_width=False,
+        ):
+            projects.update_config(active, mission_objective=new_mission)
+            st.success("保存しました")
+            st.rerun()
+
+        tab_files, tab_snaps, tab_data, tab_reports = st.tabs(
+            ["📁 ファイル", "📸 Snapshots", "📊 CAPCOM Data", "📝 Reports"]
+        )
+
+        with tab_files:
+            _render_project_files_tab(active)
+        with tab_snaps:
+            _render_project_snapshots_tab(active)
+        with tab_data:
+            _render_project_data_tab(active)
+        with tab_reports:
+            _render_project_reports_tab(active)
+
+
+def _parse_iso(iso: str) -> float:
+    """ISO フォーマット文字列を epoch 秒に変換 (失敗時は 0)。"""
+    try:
+        return datetime.fromisoformat(iso).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _render_project_files_tab(active: str) -> None:
+    """プロジェクト配下の全種別ファイル一覧をバッジ付きで表示する。"""
+    from services import analysis_state as st_state
+    from services import projects
+
+    st.caption("プロジェクトの files/ 配下の全ファイル。特許以外はアップロード UI が Home.py NPL タブにあります。")
+
+    # 種別ごとに一覧
+    for kind, label in [
+        ("patents", "特許"),
+        ("academic", "学術論文"),
+        ("news", "ニュース"),
+        ("market", "マーケット"),
+        ("policy", "政策"),
+    ]:
+        d = projects.project_files_dir(kind, active)
+        if not d.exists():
+            continue
+        files = sorted([p for p in d.iterdir() if p.is_file()], key=lambda p: p.stat().st_mtime, reverse=True)
+        if not files:
+            continue
+        with st.container():
+            st.markdown(f"**{label} ({len(files)} 件)**")
+            for p in files:
+                mtime = p.stat().st_mtime
+                size_kb = p.stat().st_size / 1024
+                badge = ""
+                # 特許のみ前処理済判定
+                if kind == "patents" and st_state.has_state("patent", p.name):
+                    badge = " ✅ 前処理済"
+                cols = st.columns([5, 1, 1, 1])
+                cols[0].caption(f"📄 {p.name}{badge}")
+                cols[1].caption(f"{size_kb:.0f} KB")
+                cols[2].caption(_relative_time(mtime))
+                with cols[3]:
+                    if st.button("削除", key=f"del_file_{active}_{kind}_{p.name}"):
+                        try:
+                            p.unlink()
+                            if kind == "patents":
+                                st_state.delete_state("patent", p.name)
+                            st.success(f"'{p.name}' を削除しました")
+                            st.rerun()
+                        except OSError as e:
+                            st.error(f"削除失敗: {e}")
+    # 前処理キャッシュ (従来の matrix 表示)
+    st.markdown("---")
+    _render_cache_index_table()
+
+
+def _render_project_snapshots_tab(active: str) -> None:
+    """store/snapshots/*.png の一覧をサムネイル付きで表示する。"""
+    from services import projects
+
+    d = projects.project_store_dir(active) / "snapshots"
+    if not d.exists():
+        st.caption("まだスナップショットはありません。各分析モジュールで 📸 ボタンを押すと自動保存されます。")
+        return
+    pngs = sorted(d.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not pngs:
+        st.caption("まだスナップショットはありません。")
+        return
+    st.caption(f"{len(pngs)} 件のスナップショットを保存済み")
+    # 3 列グリッドで表示 (最初の 12 件まで)
+    for i in range(0, min(len(pngs), 12), 3):
+        cols = st.columns(3)
+        for j, p in enumerate(pngs[i : i + 3]):
+            with cols[j]:
+                st.image(str(p), caption=p.stem, use_container_width=True)
+    if len(pngs) > 12:
+        st.caption(f"... 他 {len(pngs) - 12} 件")
+
+
+def _render_project_data_tab(active: str) -> None:
+    """store/data/*.json の一覧を表示する。"""
+    from services import projects
+
+    d = projects.project_store_dir(active) / "data"
+    if not d.exists():
+        st.caption("まだ CAPCOM データはありません。各分析モジュールを実行すると自動保存されます。")
+        return
+    files = sorted([p for p in d.iterdir() if p.is_file()], key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        st.caption("まだ CAPCOM データはありません。")
+        return
+    st.caption(f"{len(files)} 件の分析結果データを保存済み")
+    for p in files:
+        mtime = p.stat().st_mtime
+        size_kb = p.stat().st_size / 1024
+        cols = st.columns([5, 1, 1])
+        cols[0].caption(f"📊 {p.name}")
+        cols[1].caption(f"{size_kb:.1f} KB")
+        cols[2].caption(_relative_time(mtime))
+
+
+def _render_project_reports_tab(active: str) -> None:
+    """reports/ 配下の生成済みレポートを一覧表示する。"""
+    from services import projects
+
+    d = projects.project_reports_dir(active)
+    if not d.exists():
+        st.caption("まだレポートはありません。VOYAGER / CAPCOM で生成するとここに保存されます。")
+        return
+    files = sorted([p for p in d.iterdir() if p.is_file()], key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        st.caption("まだレポートはありません。")
+        return
+    st.caption(f"{len(files)} 件のレポートを保存済み")
+    for p in files:
+        mtime = p.stat().st_mtime
+        size_kb = p.stat().st_size / 1024
+        cols = st.columns([5, 1, 1, 1])
+        cols[0].caption(f"📝 {p.name}")
+        cols[1].caption(f"{size_kb:.1f} KB")
+        cols[2].caption(_relative_time(mtime))
+        with cols[3]:
+            try:
+                st.download_button(
+                    "↓",
+                    data=p.read_bytes(),
+                    file_name=p.name,
+                    key=f"dl_report_{active}_{p.name}",
+                    use_container_width=True,
+                )
+            except OSError:
+                pass
+
+
 def _render_cache_index_table() -> None:
     """前処理済みキャッシュを {ファイル × モデル} のテーブルで表示する。
 
@@ -399,12 +588,175 @@ def render_sidebar_extras() -> None:
     with st.sidebar:
         st.markdown("---")
         st.markdown("##### 🔒 Private Edition")
+        _render_project_selector()
         _render_model_selector()
         _render_cache_summary()
         from services import airgap
 
         airgap.render_external_access_badge()
         _render_session_diagnostic()
+
+
+def _render_project_selector() -> None:
+    """プロジェクト切替 selectbox + 新規作成 form。
+
+    - 現在のアクティブプロジェクトを selectbox でデフォルト表示
+    - 切替時は analysis 系 session_state をクリアして rerun
+    - 「➕ 新規作成」で expander 内のフォームから create_project を呼ぶ
+    """
+    from services import projects, lm_studio_models
+
+    all_projects = projects.list_projects()
+    active = projects.get_active()
+
+    if not all_projects:
+        # 起動直後で default が未作成の場合
+        st.caption("プロジェクトが初期化中です…")
+        return
+
+    # active が list に含まれるよう保証
+    ids = [p["project_id"] for p in all_projects]
+    labels = {p["project_id"]: p["name"] for p in all_projects}
+    if active not in ids:
+        # 整合性取れない場合は先頭に fallback
+        active = ids[0]
+        projects.set_active(active)
+
+    picked = st.selectbox(
+        "📂 プロジェクト",
+        options=ids,
+        index=ids.index(active),
+        format_func=lambda pid: labels.get(pid, pid),
+        key="apollo_project_selector",
+    )
+    if picked != active:
+        _switch_project(picked)
+
+    # 新規作成 / 削除
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("➕ 新規", key="proj_new_btn", use_container_width=True):
+            st.session_state["_show_proj_create"] = True
+    with c2:
+        if st.button("🗑️ 削除", key="proj_del_btn", use_container_width=True, disabled=(active == apollo_config.DEFAULT_PROJECT_ID)):
+            st.session_state["_show_proj_delete"] = True
+
+    if st.session_state.get("_show_proj_create"):
+        _render_project_create_form()
+    if st.session_state.get("_show_proj_delete") and active != apollo_config.DEFAULT_PROJECT_ID:
+        _render_project_delete_confirm(active)
+
+
+def _render_project_create_form() -> None:
+    """新規プロジェクト作成フォーム (expander 内にインライン表示)。"""
+    from services import projects, lm_studio_models
+
+    with st.expander("➕ 新規プロジェクト作成", expanded=True):
+        name = st.text_input("プロジェクト名", key="proj_create_name", placeholder="例: CNF 特許分析")
+
+        models = lm_studio_models.fetch_models()
+        embed_ids, chat_ids = lm_studio_models.split_embed_chat(models)
+
+        embed_default = embed_ids[0] if embed_ids else apollo_config.EMBEDDING_MODEL
+        chat_default = chat_ids[0] if chat_ids else apollo_config.CHAT_MODEL
+
+        embed_choice = st.selectbox(
+            "埋め込みモデル (作成後は変更不可)",
+            embed_ids or [embed_default],
+            key="proj_create_embed",
+            help="プロジェクトのベクトル空間を決める固定モデル。同じ CSV でも別モデルで分析したい場合は別プロジェクトを作成してください。",
+        )
+        chat_choice = st.selectbox(
+            "推論モデル (VOYAGER 既定値、後から変更可)",
+            chat_ids or [chat_default],
+            key="proj_create_chat",
+        )
+        description = st.text_input("説明 (任意)", key="proj_create_desc")
+        mission = st.text_area(
+            "Mission Objective (任意)",
+            key="proj_create_mission",
+            height=70,
+            placeholder="このプロジェクトで達成したい分析目的",
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("作成", key="proj_create_submit", type="primary", use_container_width=True, disabled=not name.strip()):
+                try:
+                    pid = projects.create_project(
+                        name=name.strip(),
+                        embedding_model=embed_choice,
+                        chat_model=chat_choice,
+                        description=description,
+                        mission_objective=mission,
+                    )
+                    st.success(f"プロジェクト '{pid}' を作成しました")
+                    st.session_state.pop("_show_proj_create", None)
+                    _switch_project(pid)
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"作成失敗: {e}")
+        with c2:
+            if st.button("キャンセル", key="proj_create_cancel", use_container_width=True):
+                st.session_state.pop("_show_proj_create", None)
+                st.rerun()
+
+
+def _render_project_delete_confirm(project_id: str) -> None:
+    """削除確認 UI (誤操作防止のため名前の再入力を要求)。"""
+    from services import projects
+
+    cfg = projects.get_config(project_id)
+    name = cfg.get("name", project_id)
+    with st.expander(f"🗑️ プロジェクト '{name}' を削除", expanded=True):
+        st.warning(
+            f"このプロジェクト配下の **全データ** (files/ state/ store/ reports/) が削除されます。"
+            f"\n\n**取り消しはできません。** 埋め込み npy キャッシュは共有なので残ります。"
+        )
+        confirm = st.text_input(
+            f"確認のため、プロジェクト名 `{name}` を入力してください",
+            key=f"proj_del_confirm_{project_id}",
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button(
+                "削除を実行",
+                key=f"proj_del_submit_{project_id}",
+                type="primary",
+                use_container_width=True,
+                disabled=confirm.strip() != name,
+            ):
+                projects.delete_project(project_id)
+                st.session_state.pop("_show_proj_delete", None)
+                _switch_project(apollo_config.DEFAULT_PROJECT_ID)
+        with c2:
+            if st.button("キャンセル", key=f"proj_del_cancel_{project_id}", use_container_width=True):
+                st.session_state.pop("_show_proj_delete", None)
+                st.rerun()
+
+
+def _switch_project(new_project_id: str) -> None:
+    """プロジェクトを切り替え、analysis 系 session_state をクリアして rerun。
+
+    認証・UI 状態など保持したいキーを除いて、分析関連の重い state は全て消す。
+    capcom_store もクリアして、新プロジェクトの store が空から始まるようにする。
+    """
+    from services import projects
+
+    projects.set_active(new_project_id)
+
+    # 保持するキー prefix / 完全一致 (認証 + サイドバー selectbox)
+    preserve_prefix = ("_auth", "authentication_status", "username", "name", "apollo_")
+    preserve_exact = {"apollo_active_project"}
+
+    for key in list(st.session_state.keys()):
+        if key in preserve_exact:
+            continue
+        if any(str(key).startswith(p) for p in preserve_prefix):
+            continue
+        del st.session_state[key]
+
+    st.session_state["apollo_active_project"] = new_project_id
+    st.rerun()
 
 
 def _render_session_diagnostic() -> None:
@@ -461,7 +813,11 @@ def _render_session_diagnostic() -> None:
 
 
 def _render_model_selector() -> None:
-    """LM Studio のモデル一覧から埋め込み / 推論モデルを selectbox で選ぶ。"""
+    """LM Studio のモデル一覧から埋め込み / 推論モデルを selectbox で選ぶ。
+
+    v7.1: 埋め込みモデルはプロジェクト作成時に固定されるため read-only 表記。
+    推論モデルは従来通り selectbox で変更可能 (レポート生成ごとに試したい要求に対応)。
+    """
     from services import lm_studio_models
 
     models = lm_studio_models.fetch_models()
@@ -471,23 +827,10 @@ def _render_model_selector() -> None:
     if err:
         st.caption(f"⚠️ LM Studio 接続失敗: `{err[:60]}`")
 
-    # 埋め込みモデル
-    if embed_ids:
-        default_embed = lm_studio_models.current_embed_model()
-        try:
-            default_idx = embed_ids.index(default_embed)
-        except ValueError:
-            default_idx = 0
-        st.selectbox(
-            "埋め込みモデル",
-            embed_ids,
-            index=default_idx,
-            key="apollo_embed_model_select",
-            help="LM Studio の /v1/models から自動取得しています。モデルを変えると"
-            "次回の前処理から別キャッシュに保存されます。",
-        )
-    else:
-        st.caption("埋め込みモデルが見つかりません")
+    # 埋め込みモデル: 現在のアクティブプロジェクトで固定 (read-only)
+    current_embed = lm_studio_models.current_embed_model()
+    st.caption(f"🔒 埋め込みモデル: `{current_embed}` (プロジェクト固定)")
+    st.caption("変更するには「➕ 新規」で別プロジェクトを作成してください。")
 
     # 推論モデル (VOYAGER 用)
     if chat_ids:
