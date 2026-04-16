@@ -42,6 +42,15 @@ def init() -> None:
 
     apollo_config.ensure_directories()
 
+    # v7.1: v7.0 既存データを projects/default/ に移行 (冪等、sentinel 付き)
+    try:
+        from services import migration_v7_0
+
+        migration_v7_0.migrate_if_needed()
+    except Exception:  # noqa: BLE001
+        # マイグレーション失敗は分析をブロックしない (次回起動で再試行)
+        pass
+
     # patiroha.SBERTEmbedder を LM Studio バックエンドのシムに差し替える。
     # Home.py / NEBULA など全ての呼び出し箇所はモジュール属性経由で参照しているので、
     # ここで属性を再バインドするだけで全箇所がシム経由になる。
