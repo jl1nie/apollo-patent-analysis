@@ -148,13 +148,41 @@ def _session_override(key: str) -> str | None:
     return None
 
 
-def current_embed_model() -> str:
-    """埋め込みモデル ID を解決する。
+def _project_config_model(field: str) -> str | None:
+    """アクティブプロジェクトの config.json から model を取得する。
 
-    優先順位: session_state["apollo_embed_model_select"]
-              → apollo_config.EMBEDDING_MODEL (env)
-              → LM Studio で最初に見つかった embedding 系モデル
+    private モード以外 or projects import 失敗時は None を返す。
     """
+    if not apollo_config.IS_PRIVATE:
+        return None
+    try:
+        from services import projects
+
+        cfg = projects.get_config()
+        val = cfg.get(field) if isinstance(cfg, dict) else None
+        if isinstance(val, str) and val.strip():
+            return val
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def current_embed_model() -> str:
+    """埋め込みモデル ID を解決する (v7.1: プロジェクト固定モデル優先)。
+
+    優先順位:
+      1. アクティブプロジェクトの `config.embedding_model` (最優先、v7.1)
+      2. session_state["apollo_embed_model_select"]
+      3. apollo_config.EMBEDDING_MODEL (env)
+      4. LM Studio で最初に見つかった embedding 系モデル
+
+    v7.1 の意図: プロジェクトは「固定ベクトル空間」であるため、session_state
+    オーバーライドより config が強い。UI 側で session_state を書き換えようとしても
+    現在のプロジェクトには影響しない (プロジェクト作成時に固定する)。
+    """
+    pmodel = _project_config_model("embedding_model")
+    if pmodel:
+        return pmodel
     override = _session_override("apollo_embed_model_select")
     if override:
         return override
@@ -168,10 +196,25 @@ def current_embed_model() -> str:
 
 
 def current_chat_model() -> str:
-    """推論モデル ID を解決する。VOYAGER レポート生成で使う。"""
+    """推論モデル ID を解決する。VOYAGER レポート生成で使う。
+
+    推論モデルはプロジェクト単位で「既定値」を持つが、サイドバーの selectbox
+    で変更可能 (レポート生成のたびに別モデルを試したいのは自然な要求)。
+    したがって session_state override はプロジェクト config より**強い**
+    (埋め込みモデルとは逆の優先順位)。
+
+    優先順位:
+      1. session_state["apollo_chat_model_select"]
+      2. アクティブプロジェクトの config.chat_model
+      3. apollo_config.CHAT_MODEL (env)
+      4. LM Studio で最初に見つかった chat 系モデル
+    """
     override = _session_override("apollo_chat_model_select")
     if override:
         return override
+    pmodel = _project_config_model("chat_model")
+    if pmodel:
+        return pmodel
     if apollo_config.CHAT_MODEL:
         return apollo_config.CHAT_MODEL
     _, chat_ids = split_embed_chat(fetch_models())
