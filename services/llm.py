@@ -126,6 +126,78 @@ class LMStudioLLMClient:
         n = apollo_config.LM_STUDIO_MAX_TOKENS
         return {"max_tokens": n} if n and n > 0 else {}
 
+    # ------------------------------------------------------------------
+    # Track K: streaming ヘルパ
+    # ------------------------------------------------------------------
+    def _consume_stream(self, stream) -> str:
+        """ストリーミングレスポンスを順次受信し、全文を文字列で返す。
+
+        streamlit コンテキスト内で呼ばれた場合は `st.empty()` プレースホルダを
+        確保し、以下を 0.5 秒間隔で表示:
+          - 累積文字数 / 経過時間 / 推定速度 (chars/s)
+          - 出力の末尾 1500 文字 (末尾プレビュー)
+
+        WebSocket を定期的な書き込みで活性化 (ブラウザ idle 切断を防ぐ)。
+        streamlit 外でも動作する (単に placeholder が None になるだけ)。
+        """
+        placeholder = None
+        try:
+            import streamlit as st
+
+            placeholder = st.empty()
+            placeholder.caption(f"🤖 LM Studio ({self.model_name}) で生成開始...")
+        except Exception:  # noqa: BLE001
+            pass
+
+        accumulated: list[str] = []
+        start_ts = time.time()
+        last_ui = 0.0
+        chunk_count = 0
+
+        for chunk in stream:
+            chunk_count += 1
+            try:
+                delta = chunk.choices[0].delta.content
+            except (AttributeError, IndexError, TypeError):
+                continue
+            if not delta:
+                continue
+            accumulated.append(delta)
+
+            # UI 更新 (500ms ごと)
+            if placeholder is not None:
+                now = time.time()
+                if now - last_ui > 0.5:
+                    try:
+                        full = "".join(accumulated)
+                        elapsed = now - start_ts
+                        chars_per_sec = len(full) / elapsed if elapsed > 0 else 0
+                        tail = full[-1500:] if len(full) > 1500 else full
+                        placeholder.markdown(
+                            f"🤖 **生成中** · {len(full):,} 文字 · "
+                            f"{elapsed:.0f}s 経過 · {chars_per_sec:.0f} 文字/秒 · "
+                            f"{chunk_count:,} chunks\n\n"
+                            f"_末尾プレビュー:_\n"
+                            f"```\n{tail}\n```"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    last_ui = now
+
+        # 生成完了: プレースホルダをクリア (次段の UI を邪魔しない)
+        full_result = "".join(accumulated)
+        if placeholder is not None:
+            try:
+                elapsed = time.time() - start_ts
+                placeholder.caption(
+                    f"✅ 生成完了 · {len(full_result):,} 文字 · "
+                    f"{elapsed:.0f}s · {chunk_count:,} chunks"
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        return full_result
+
     def generate_text(
         self,
         system_prompt: str,
@@ -160,16 +232,17 @@ class LMStudioLLMClient:
         last_err: Exception | None = None
         for attempt in range(max_retries):
             try:
-                resp = self._client.chat.completions.create(
+                stream = self._client.chat.completions.create(
                     model=self.model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.7,
+                    stream=True,
                     **self._max_tokens_kwarg(),
                 )
-                return resp.choices[0].message.content or ""
+                return self._consume_stream(stream)
             except Exception as e:
                 last_err = e
                 if attempt < max_retries - 1:
@@ -208,16 +281,17 @@ class LMStudioLLMClient:
                             "image_url": {"url": f"data:image/png;base64,{b64}"},
                         }
                     )
-                resp = self._client.chat.completions.create(
+                stream = self._client.chat.completions.create(
                     model=self.model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": content},
                     ],
                     temperature=0.7,
+                    stream=True,
                     **self._max_tokens_kwarg(),
                 )
-                return resp.choices[0].message.content or ""
+                return self._consume_stream(stream)
             except Exception as e:
                 last_err = e
                 if attempt < max_retries - 1:

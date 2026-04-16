@@ -724,8 +724,11 @@ if st.button("📝 レポート生成", type="primary", key="voyager_generate_re
             module_groups[mod].append((snap_idx + 1, snap))  # 1-based index
 
         analyst_results = {}
+        _mod_total = len(module_groups)
         for idx, (mod, snaps_group) in enumerate(module_groups.items()):
-            progress.progress((idx + 1) / (len(module_groups) + 2))
+            progress.progress((idx + 1) / (_mod_total + 2))
+            # v7.0-private.2 Track K: モジュール単位の細粒度ステータス
+            status.markdown(f"🔄 **Phase 1/3: {mod} モジュール分析中 ({idx + 1}/{_mod_total})...**")
 
             evidence_text = ""
             for eid, s in snaps_group:
