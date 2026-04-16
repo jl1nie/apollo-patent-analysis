@@ -226,3 +226,184 @@ def _install_capcom_hooks() -> None:
             _write_bytes("data", "patents.csv", bytes(csv_bytes))
 
     capcom.save_patents_csv = save_patents_csv
+
+
+# ==================================================================
+# Track L: 再起動後のディスクからの session_state 再復元
+# ==================================================================
+
+
+def hydrate_from_disk() -> dict:
+    """プロジェクト store/ 配下の永続データから session_state を再構築する。
+
+    再起動や session_state.clear() で失われた snapshot / data / prompts /
+    voyager を disk から読み戻す。`st.session_state['snapshots']` と
+    `capcom_store` の両方を更新する。
+
+    冪等: 既にデータが入っている session_state は上書きしない (metadata 側の
+    size 比較で判断)。
+
+    戻り値: 読み戻した件数のサマリ {"snapshots": N, "data": N, ...}
+    """
+    summary: dict = {"snapshots": 0, "data": 0, "prompts": 0, "voyager": 0}
+    if not apollo_config.IS_PRIVATE:
+        return summary
+    try:
+        import streamlit as st
+
+        from services import projects
+    except Exception:  # noqa: BLE001
+        return summary
+
+    try:
+        store_dir = projects.project_store_dir()
+    except Exception:  # noqa: BLE001
+        return summary
+    if not store_dir.exists():
+        return summary
+
+    # --- snapshots を session_state['snapshots'] として再構築 ---
+    snap_dir = store_dir / "snapshots"
+    if snap_dir.exists() and not st.session_state.get("snapshots"):
+        summary["snapshots"] = _hydrate_snapshots(snap_dir, st)
+
+    # --- capcom_store.data を再投入 ---
+    data_dir = store_dir / "data"
+    if data_dir.exists():
+        summary["data"] = _hydrate_capcom_data(data_dir, st)
+
+    # --- capcom_store.prompts ---
+    prompts_dir = store_dir / "prompts"
+    if prompts_dir.exists():
+        summary["prompts"] = _hydrate_capcom_prompts(prompts_dir, st)
+
+    # --- capcom_store.voyager (mission / context / evidence) ---
+    voyager_dir = store_dir / "voyager"
+    if voyager_dir.exists():
+        summary["voyager"] = _hydrate_capcom_voyager(voyager_dir, st)
+
+    return summary
+
+
+def _hydrate_snapshots(snap_dir, st) -> int:
+    """store/snapshots/ → session_state['snapshots'] を復元。"""
+    import json as _json
+
+    meta_path = snap_dir / "metadata.json"
+    if not meta_path.exists():
+        return 0
+    try:
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    snaps_meta = meta.get("snapshots") if isinstance(meta, dict) else None
+    if not snaps_meta:
+        return 0
+
+    restored = []
+    for snap in snaps_meta:
+        if not isinstance(snap, dict):
+            continue
+        sid = snap.get("id")
+        if not sid:
+            continue
+        # snap_id_{index}.png を列挙
+        pngs = sorted(snap_dir.glob(f"{sid}_*.png"))
+        if not pngs:
+            single = snap_dir / f"{sid}.png"
+            if single.exists():
+                pngs = [single]
+        images = [p.read_bytes() for p in pngs]
+        restored_snap = dict(snap)  # shallow copy of metadata
+        restored_snap["images"] = images
+        restored.append(restored_snap)
+
+    if restored:
+        st.session_state["snapshots"] = restored
+    return len(restored)
+
+
+def _hydrate_capcom_data(data_dir, st) -> int:
+    """store/data/ → capcom_store['data'] を復元。"""
+    import json as _json
+
+    store = _session_capcom_store(st)
+    if store is None:
+        return 0
+    count = 0
+    for p in data_dir.iterdir():
+        if not p.is_file():
+            continue
+        name = p.name
+        if name in store["data"]:
+            continue  # already present in memory
+        try:
+            if name.endswith(".json"):
+                store["data"][name] = _json.loads(p.read_text(encoding="utf-8"))
+            else:
+                store["data"][name] = p.read_bytes()
+            count += 1
+        except (OSError, ValueError):
+            continue
+    return count
+
+
+def _hydrate_capcom_prompts(prompts_dir, st) -> int:
+    store = _session_capcom_store(st)
+    if store is None:
+        return 0
+    count = 0
+    for p in prompts_dir.iterdir():
+        if not p.is_file() or not p.name.endswith(".md"):
+            continue
+        if p.name in store["prompts"]:
+            continue
+        try:
+            store["prompts"][p.name] = p.read_text(encoding="utf-8")
+            count += 1
+        except OSError:
+            continue
+    return count
+
+
+def _hydrate_capcom_voyager(voyager_dir, st) -> int:
+    import json as _json
+
+    store = _session_capcom_store(st)
+    if store is None:
+        return 0
+    count = 0
+    for name in ("mission.json", "context.json"):
+        p = voyager_dir / name
+        if p.exists():
+            try:
+                key = name.replace(".json", "")
+                if store["voyager"].get(key) is None:
+                    store["voyager"][key] = _json.loads(p.read_text(encoding="utf-8"))
+                    count += 1
+            except (OSError, ValueError):
+                pass
+    ev_dir = voyager_dir / "evidence"
+    if ev_dir.exists():
+        for p in ev_dir.iterdir():
+            if not p.is_file() or not p.name.endswith(".json"):
+                continue
+            if p.name in store["voyager"]["evidence"]:
+                continue
+            try:
+                store["voyager"]["evidence"][p.name] = _json.loads(p.read_text(encoding="utf-8"))
+                count += 1
+            except (OSError, ValueError):
+                continue
+    return count
+
+
+def _session_capcom_store(st):
+    """capcom_store を返す (無ければ None)。"""
+    try:
+        store = st.session_state.get("capcom_store")
+        if isinstance(store, dict) and "data" in store:
+            return store
+    except Exception:  # noqa: BLE001
+        pass
+    return None

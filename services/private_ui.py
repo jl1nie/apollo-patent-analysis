@@ -881,6 +881,35 @@ def render_sidebar_extras() -> None:
     if not apollo_config.IS_PRIVATE:
         return
 
+    # v7.0-private.2 Track L: CAPCOM セッションを自動開始 + ディスク hydrate
+    # 1. session_state にセッションが無ければ初期化 (これで各モジュールの
+    #    `if capcom.is_active():` ガードが常に通り Track B のミラーが発火する)
+    # 2. hydrate_from_disk で projects/<active>/store/ から snapshot / data /
+    #    prompts / voyager を session_state に戻す (再起動後の復元)
+    try:
+        import capcom
+
+        if not capcom.is_active():
+            capcom.init_session()
+
+        from services.project_hooks import hydrate_from_disk
+
+        _hydrate_summary = hydrate_from_disk()
+        if any(_hydrate_summary.values()):
+            # 復元があれば 1 回だけ通知
+            if not st.session_state.get("_apollo_hydrate_notified"):
+                total = sum(_hydrate_summary.values())
+                st.toast(
+                    f"💾 プロジェクトから復元: {total} 件 ("
+                    f"snapshot {_hydrate_summary['snapshots']} / "
+                    f"data {_hydrate_summary['data']} / "
+                    f"prompts {_hydrate_summary['prompts']} / "
+                    f"voyager {_hydrate_summary['voyager']})"
+                )
+                st.session_state["_apollo_hydrate_notified"] = True
+    except Exception:  # noqa: BLE001
+        pass
+
     with st.sidebar:
         st.markdown("---")
         st.markdown("##### 🔒 Private Edition")
