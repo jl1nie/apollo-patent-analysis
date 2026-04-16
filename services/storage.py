@@ -108,7 +108,7 @@ def compute_content_key(
 def session_index_path() -> Path:
     """session index (content_key → metadata) のパス。
 
-    v7.1 以降: アクティブプロジェクト内 `projects/<active>/state/.index.json`。
+    v7.0-private.2 以降: アクティブプロジェクト内 `projects/<active>/state/.index.json`。
     プロジェクト単位でベクトル空間が分離されるので、index も project-scoped。
 
     hosted モード / private 初期化前でも path 計算は行う (実 I/O は callers の

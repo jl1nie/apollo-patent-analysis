@@ -1,4 +1,4 @@
-"""capcom のモンキーパッチによるレポート素材ミラー書き込み (v7.1 Track B)。
+"""capcom のモンキーパッチによるレポート素材ミラー書き込み (v7.0-private.2 Track B)。
 
 `apollo_bootstrap.init()` が private モード起動時に `install_all_hooks()` を
 呼び、`capcom.save_*` 系の関数を wrap する。元の session_state 書き込みに加え、

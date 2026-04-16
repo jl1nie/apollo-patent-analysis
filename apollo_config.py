@@ -22,7 +22,7 @@ CACHE_DIR: Path = DATA_ROOT / "cache" / "embeddings"
 UPLOADS_DIR: Path = DATA_ROOT / "uploads"
 SESSION_DIR: Path = DATA_ROOT / "sessions"
 INPUTS_DIR: Path = DATA_ROOT / "inputs"
-# v7.1: プロジェクト階層のルート
+# v7.0-private.2: プロジェクト階層のルート
 PROJECTS_ROOT: Path = DATA_ROOT / "projects"
 DEFAULT_PROJECT_ID: str = "default"
 

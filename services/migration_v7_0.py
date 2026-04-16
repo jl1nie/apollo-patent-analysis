@@ -1,4 +1,4 @@
-"""v7.0-private.1 → v7.1 データ自動マイグレーション。
+"""v7.0-private.1 → v7.0-private.2 データ自動マイグレーション。
 
 `apollo_bootstrap.init()` が private モード起動時に 1 回だけ呼ぶ冪等関数。
 既存データを破壊せずに新しいプロジェクト階層に統合する。
@@ -20,7 +20,7 @@
     ├── cache/embeddings/*.npy            # 共有なので移動しない
     └── users/users.yml
 
-**新 v7.1 レイアウト:**
+**新 v7.0-private.2 レイアウト:**
 ::
 
     /var/lib/apollo/
@@ -55,8 +55,8 @@ from pathlib import Path
 import apollo_config
 from services import projects
 
-# 旧 label 名 → v7.1 files/ サブディレクトリ名の対応
-# server_files.VALID_LABELS は ("patent", "academic", ...) だが v7.1 は "patents" (複数形)
+# 旧 label 名 → v7.0-private.2 files/ サブディレクトリ名の対応
+# server_files.VALID_LABELS は ("patent", "academic", ...) だが v7.0-private.2 は "patents" (複数形)
 _LABEL_MAP = {
     "patent": "patents",
     "academic": "academic",
@@ -84,7 +84,7 @@ def _link_or_copy(src: Path, dst: Path) -> None:
 def _migrate_session_index(default_id: str) -> bool:
     """sessions/index.json → projects/default/state/.index.json にコピー。
 
-    v7.1 では index を project-scoped にするため、v7.0 のフラットな index を
+    v7.0-private.2 では index を project-scoped にするため、v7.0 のフラットな index を
     そのまま default プロジェクト配下にコピーする (全エントリが v7.0 では
     patent label しか無かった前提。label フィールドは保持)。
 
@@ -102,7 +102,7 @@ def _migrate_session_index(default_id: str) -> bool:
 def _migrate_state_pkls(default_id: str) -> int:
     """sessions/patent/*.pkl → projects/default/state/ にハードリンク。
 
-    v7.0 の pkl フォーマットは v7.1 と互換 (`analysis_state.STATE_KEYS` 一致)
+    v7.0 の pkl フォーマットは v7.0-private.2 と互換 (`analysis_state.STATE_KEYS` 一致)
     なのでそのままコピーすれば load_state_by_key で読める。
     """
     old_dir = apollo_config.SESSION_DIR / "patent"
@@ -143,7 +143,7 @@ def _migrate_input_files(default_id: str) -> int:
 
 
 def migrate_if_needed() -> dict:
-    """v7.0 → v7.1 マイグレーション。冪等。
+    """v7.0 → v7.0-private.2 マイグレーション。冪等。
 
     返り値は sentinel 以外に行った処理のサマリ::
 

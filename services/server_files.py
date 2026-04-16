@@ -31,7 +31,7 @@ import apollo_config
 VALID_LABELS = ("patent", "academic", "news", "policy", "market")
 VALID_EXTENSIONS = (".csv", ".xlsx", ".xls")
 
-# v7.1: server_files の label → projects/<active>/files/<kind>/ のサブディレクトリ名
+# v7.0-private.2: server_files の label → projects/<active>/files/<kind>/ のサブディレクトリ名
 # 対応 (patent だけ複数形に変わる)
 _LABEL_TO_KIND = {
     "patent": "patents",
@@ -43,7 +43,7 @@ _LABEL_TO_KIND = {
 
 
 def _label_dir(label: str) -> Path:
-    """v7.1: アクティブプロジェクト配下 `projects/<active>/files/<kind>/` を返す。
+    """v7.0-private.2: アクティブプロジェクト配下 `projects/<active>/files/<kind>/` を返す。
 
     hosted モードや projects import 失敗時は旧 v7.0 パス `inputs/<label>/` に
     フォールバックする (保険)。

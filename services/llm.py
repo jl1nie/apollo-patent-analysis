@@ -23,7 +23,7 @@ import apollo_config
 class GeminiLLMClient:
     """Google Gemini API クライアント (hosted モード用)。
 
-    v7.1: `images` (list[bytes]) を受け取ると multimodal 呼び出しに切り替わる。
+    v7.0-private.2: `images` (list[bytes]) を受け取ると multimodal 呼び出しに切り替わる。
     """
 
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash") -> None:

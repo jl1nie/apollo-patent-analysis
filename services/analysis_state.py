@@ -3,7 +3,7 @@
 private モードでブラウザログアウト/再ログインしても作業が継続できるよう、
 preprocess 完了後の重い結果を named volume に pickle 保存する。
 
-**v7.1 から** 保存キーを「ファイル名」から「CSV 内容ハッシュ + 埋め込みモデル ID」
+**v7.0-private.2 から** 保存キーを「ファイル名」から「CSV 内容ハッシュ + 埋め込みモデル ID」
 ベース (`content_key`) に統一した。これにより:
 
 - ファイル名を変えても同じ CSV は同じセッションにヒットする
@@ -73,9 +73,9 @@ def _safe_filename(name: str) -> str:
 
 
 def _state_path_by_key(label: str, content_key: str) -> Path:
-    """projects/<active>/state/{content_key}.pkl (v7.1)
+    """projects/<active>/state/{content_key}.pkl (v7.0-private.2)
 
-    v7.1 からベクトル空間はプロジェクト単位で分離されるため、label サブディレクトリ
+    v7.0-private.2 からベクトル空間はプロジェクト単位で分離されるため、label サブディレクトリ
     は廃止。下位互換のため引数の `label` は受け取るが使わない (将来 NEBULA 独立
     state 保存で再利用する余地を残す)。
     """

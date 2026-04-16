@@ -42,7 +42,7 @@ def init() -> None:
 
     apollo_config.ensure_directories()
 
-    # v7.1: v7.0 既存データを projects/default/ に移行 (冪等、sentinel 付き)
+    # v7.0-private.2: v7.0 既存データを projects/default/ に移行 (冪等、sentinel 付き)
     try:
         from services import migration_v7_0
 
@@ -51,7 +51,7 @@ def init() -> None:
         # マイグレーション失敗は分析をブロックしない (次回起動で再試行)
         pass
 
-    # v7.1: capcom.save_* のモンキーパッチを適用し、レポート素材を
+    # v7.0-private.2: capcom.save_* のモンキーパッチを適用し、レポート素材を
     # アクティブプロジェクトの store/ 配下にミラーする (Track B)
     try:
         from services import project_hooks

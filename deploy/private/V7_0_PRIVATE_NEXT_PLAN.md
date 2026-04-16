@@ -1,4 +1,10 @@
-# APOLLO v7.1 Private — プロジェクト階層 + レポート素材永続化 + Vision VOYAGER
+# APOLLO v7.0-private.2 (上流 v7.0.0 派生) — プロジェクト階層 + レポート素材永続化 + Vision VOYAGER + ローカル AI サジェスト
+
+## 命名規約について
+
+**"v7.1" ではなく "v7.0-private.2"** と呼称する理由: "v7.1" は上流オリジナル作者 (しばやま氏) の
+バージョン空間であり、派生ブランチが自称するのは不適切。本派生は v7.0.0 (upstream) + private-2
+(派生第 2 版) という位置付けで、baseline の `v7.0-private.1` を継承・拡張する。
 
 ## Context
 
@@ -9,7 +15,7 @@ v7.0.0-private.1 では「ファイル × モデル」matrix の flat 構造で�
 - **ユーザーの頭の中のメンタルモデル不一致**: ユーザーは「特許フォルダ・マーケットフォルダ…」という**ドメイン単位の階層**で作業を整理したい (2026-04-16 のヒアリング結果)
 - **Snapshot の vision 未活用**: VOYAGER は現状 Gemini にテキストしか送っておらず、ユーザーが選択的にキャプチャした PNG の視覚的構造 (外れ値位置・密度偏り) を LLM が読めていない
 
-v7.1 ではこれらを**プロジェクト階層 + 固定モデル + レポート素材の自動永続化 + Vision 対応**で一括解決する。上流 V7 本体への変更はゼロを維持する。
+v7.0-private.2 ではこれらを**プロジェクト階層 + 固定モデル + レポート素材の自動永続化 + Vision 対応**で一括解決する。上流 V7 本体への変更はゼロを維持する。
 
 ---
 
@@ -19,7 +25,7 @@ v7.1 ではこれらを**プロジェクト階層 + 固定モデル + レポー�
 2. **hosted モードの挙動は完全に不変** (全変更が `apollo_config.IS_PRIVATE` ガード下)
 3. **v7.0 既存データは自動移行** (default プロジェクトに編入、ユーザー操作不要)
 4. **プロジェクト作成は明示 UI + default 存在** (初めて使うユーザーも default で何も意識せず使える)
-5. **Vision VOYAGER は v7.1 スコープに含める** (Gemini と LM Studio 両方で multimodal 対応)
+5. **Vision VOYAGER は v7.0-private.2 スコープに含める** (Gemini と LM Studio 両方で multimodal 対応)
 6. **active project は `projects/.active` ファイルが single source of truth**、`st.session_state` は optimistic cache のみ (session_state.clear() で active が失われる事故を防ぐ)
 
 ---
@@ -103,7 +109,7 @@ v7.1 ではこれらを**プロジェクト階層 + 固定モデル + レポー�
 | `services/projects.py` | **新規** | プロジェクト CRUD。`create_project`, `list_projects`, `get_active`, `set_active`, `get_config`, `update_config`, `delete_project`, `project_root` |
 | `services/project_hooks.py` | **新規** | capcom / utils / analysis_state のモンキーパッチ用ラッパー群。`install_all_hooks()` が `apollo_bootstrap.init()` から呼ばれる |
 | `services/llm_vision.py` | **新規** | multimodal LLM クライアント。`GeminiMultimodalClient`, `LMStudioMultimodalClient`, 共通基底 `MultimodalLLMClient`。`generate_multimodal(system, user, images: list[bytes]) -> str` を提供 |
-| `services/migration_v7_0.py` | **新規** | v7.0 → v7.1 自動マイグレーション。apollo_bootstrap.init() が 1 度だけ呼ぶ冪等関数 |
+| `services/migration_v7_0.py` | **新規** | v7.0 → v7.0-private.2 自動マイグレーション。apollo_bootstrap.init() が 1 度だけ呼ぶ冪等関数 |
 | `services/private_ui.py` | 改修 | `render_sidebar_extras` にプロジェクト selector 追加。`render_patent_picker_section` をプロジェクトダッシュボードに差し替え (既存 hook 点は維持)。`render_project_create_modal` 新設 |
 | `services/analysis_state.py` | 改修 | `save_state` / `load_state` のパス解決を `projects/<active>/state/` に変更。content_key ベースは維持 |
 | `services/server_files.py` | 改修 | flat `uploads/patent/` を `projects/<active>/files/patents|academic|...` に切り替え。`list_files(kind)` / `save_file(kind, name, bytes)` の API は維持 (path 解決のみ変更) |
@@ -184,7 +190,7 @@ def _install_capcom_hooks() -> None:
 ### Track C — 前処理結果のパス解決 (`services/analysis_state.py` 改修)
 
 現在: `sessions/patent/<content_key>.pkl`
-v7.1: `projects/<active>/state/<content_key>.pkl`
+v7.0-private.2: `projects/<active>/state/<content_key>.pkl`
 
 `save_state_by_key` / `load_state_by_key` / `update_state` / `list_sessions` すべてを project-aware に変更。session_index.json の代わりに、プロジェクト内の pkl 一覧を直接スキャンして index を構築 (軽量なのでインメモリ OK)。
 
@@ -194,7 +200,7 @@ v7.1: `projects/<active>/state/<content_key>.pkl`
 1. `Home.py:862` — 特許本体 (`sbert_embeddings`)、入力列 `title + abstract + claim`
 2. `pages/9_🌌_NEBULA.py:974` — 学術論文 (`nebula_academic_embeddings`)、入力列 `unified_title×2 + unified_content`
 
-どちらも `patiroha.SBERTEmbedder` 経由 (= v7.0 で LMStudioEmbedderShim に差し替え済み)。入力列が違うので npy キャッシュは自動的に別キーに落ちる。v7.1 で「プロジェクト切替」を行ったら、両方の session_state キーを一貫してクリアすること (`sbert_embeddings` + `nebula_academic_embeddings` + `tfidf_matrix` + `feature_names` + `df_npl` + `df_npl_accumulated` など、`STATE_KEYS` 全部)。切替後の最初の分析で同じ content_key に対応する pkl があれば自動復元、なければ再計算 → プロジェクト config のモデルで埋め込み直し、という流れを担保する。
+どちらも `patiroha.SBERTEmbedder` 経由 (= v7.0 で LMStudioEmbedderShim に差し替え済み)。入力列が違うので npy キャッシュは自動的に別キーに落ちる。v7.0-private.2 で「プロジェクト切替」を行ったら、両方の session_state キーを一貫してクリアすること (`sbert_embeddings` + `nebula_academic_embeddings` + `tfidf_matrix` + `feature_names` + `df_npl` + `df_npl_accumulated` など、`STATE_KEYS` 全部)。切替後の最初の分析で同じ content_key に対応する pkl があれば自動復元、なければ再計算 → プロジェクト config のモデルで埋め込み直し、という流れを担保する。
 
 ### Track D — モデル選択の project 化 (`services/lm_studio_models.py` / `embeddings.py`)
 
@@ -269,7 +275,7 @@ def generate_multimodal(self, system_prompt, user_prompt, images):
 
 **実装のポイント**: `create_client()` は従来通り `GeminiLLMClient` / `LMStudioLLMClient` を返す。両者の `generate_text` が `images` 引数を受け取り、`images` が non-empty なら自動で multimodal 呼び出しに切り替える (`generate_multimodal` の内部呼び出し)。images が空/None なら従来の text-only 呼び出し。これで hosted モードでも 1 行で対応できる。
 
-### Track F — v7.0 → v7.1 マイグレーション (`services/migration_v7_0.py`)
+### Track F — v7.0 → v7.0-private.2 マイグレーション (`services/migration_v7_0.py`)
 
 `apollo_bootstrap.init()` が private モードで起動時に 1 度だけ実行する冪等関数:
 
@@ -338,16 +344,16 @@ def migrate_if_needed() -> None:
 ```
 
 **サイドバーが single source of truth**:
-サイドバーに「プロジェクト名 + 固定埋め込みモデル + 推論モデル」が常時表示されるので、以下のページ内静的ラベルは v7.1 では**重複情報**になる:
-- `Home.py:733` 「分析エンジン起動 ({EMBEDDER_LABEL}/TF-IDF)」ボタンラベル — v7.0 で動的化した PEP 562 ハックが v7.1 では不要に思える
+サイドバーに「プロジェクト名 + 固定埋め込みモデル + 推論モデル」が常時表示されるので、以下のページ内静的ラベルは v7.0-private.2 では**重複情報**になる:
+- `Home.py:733` 「分析エンジン起動 ({EMBEDDER_LABEL}/TF-IDF)」ボタンラベル — v7.0 で動的化した PEP 562 ハックが v7.0-private.2 では不要に思える
 - `pages/8_📝_VOYAGER.py:571` 「### 🤖 VOYAGER レポート生成 (Local LLM: {CHAT_MODEL})」見出し — 同じく静的でサイドバーと冗長
 
 **v7 本体 touch ゼロ原則により、これらの静的ラベル自体は削除できない** (ページファイルを編集することになるため)。ただし:
 1. v7.0 で仕掛けた `apollo_config.__getattr__("EMBEDDER_LABEL")` の動的化は、動作上必要不可欠ではなくなる (ユーザーはサイドバーを見る)
 2. VOYAGER の `CHAT_MODEL` 静的ラベルは、実際の LLM 呼び出しモデルと乖離しても致命的ではない (サイドバーが正しい値を出すため、ユーザーは混乱しない)
-3. 将来上流 V7 がこれらのラベルを削除するなら、そのタイミングで v7.1 プラグイン側も PEP 562 ハックを撤去できる
+3. 将来上流 V7 がこれらのラベルを削除するなら、そのタイミングで v7.0-private.2 プラグイン側も PEP 562 ハックを撤去できる
 
-**設計方針**: v7.1 ではページ内ラベルを気にせず、サイドバーを唯一の真実とする。`apollo_config.EMBEDDER_LABEL` の PEP 562 動的化は v7.0 からの継続で残すが、新たな動的化は追加しない。
+**設計方針**: v7.0-private.2 ではページ内ラベルを気にせず、サイドバーを唯一の真実とする。`apollo_config.EMBEDDER_LABEL` の PEP 562 動的化は v7.0 からの継続で残すが、新たな動的化は追加しない。
 
 **Home.py のメインエリア (既存 `render_patent_picker_section()` フックを拡張)**:
 
@@ -393,7 +399,7 @@ NPL データの「追加済/未追加/前処理済/埋め込み済」バッジ�
 
 ファイルごとに **前処理済/未処理バッジ + 行数** が出る。`capcom_store['data']` が空でも projects/store/data/ に既に永続化されていれば表示される。
 
-**NPL データの追加状態を明示**: 現状の Home.py UI は「CSV をアップロード → プレビュー表示 → 列マッピング → ➕ データセットに追加」の 4 段階で、「追加ボタンを押さないと `df_npl_accumulated` に入らない」という仕様がユーザーには分かりにくく、実際のバグ報告につながった (2026-04-16)。v7.1 のプロジェクトダッシュボードでは、ファイルリスト表示時に明示的にバッジを使い分ける:
+**NPL データの追加状態を明示**: 現状の Home.py UI は「CSV をアップロード → プレビュー表示 → 列マッピング → ➕ データセットに追加」の 4 段階で、「追加ボタンを押さないと `df_npl_accumulated` に入らない」という仕様がユーザーには分かりにくく、実際のバグ報告につながった (2026-04-16)。v7.0-private.2 のプロジェクトダッシュボードでは、ファイルリスト表示時に明示的にバッジを使い分ける:
 - `[📄 未追加]`: アップロードされたが追加ボタン未押下 (プレビューだけ)
 - `[✅ 追加済 / 前処理待ち]`: データセットに追加されたが preprocess 未実行
 - `[🔄 前処理済 / 埋め込み未]`: preprocess 完了、NEBULA で埋め込みボタンを押せば分析可能
@@ -428,7 +434,7 @@ APOLLO_MODE=hosted streamlit run Home.py
 - `projects/` ディレクトリが作られないこと
 - 既存 v7 と完全に同一挙動
 
-### 5-2. v7.0 → v7.1 自動マイグレーション
+### 5-2. v7.0 → v7.0-private.2 自動マイグレーション
 ```bash
 # v7.0.0-private.1 で作業したデータが残った volume で起動
 docker compose -f deploy/private/docker-compose.yml -f deploy/private/docker-compose.override.yml up -d
@@ -498,7 +504,7 @@ docker exec apollo-private-v7 ls -la /var/lib/apollo/projects/default/state/
 - **CAPCOM ZIP のプロジェクト単位差分 export**: v7.2 以降
 - **報告書履歴の diff 表示**: v7.2 以降
 - **プロジェクトのテンプレート / prefab 構成**: v7.2 以降
-- **旧 v7.0 sessions/ ディレクトリの削除 UI**: 安全のため v7.1 では残しておく (マイグレーション後に手動削除してもらう)
+- **旧 v7.0 sessions/ ディレクトリの削除 UI**: 安全のため v7.0-private.2 では残しておく (マイグレーション後に手動削除してもらう)
 
 ---
 

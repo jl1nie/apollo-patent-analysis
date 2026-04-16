@@ -1,6 +1,6 @@
 [project]
 name = "apollo-patent-analysis"
-version = "7.0.0-private.1"
+version = "7.0.0+private.2"
 description = "APOLLO v7 — Advanced Patent & Overall Landscape-analytics Logic Orbiter (Private Edition)"
 readme = "README.md"
 license = { text = "MIT" }

@@ -21,11 +21,15 @@ from typing import Tuple
 import apollo_config
 
 # ------------------------------------------------------------------
-# 10 秒程度の単純なメモリキャッシュ
+# モデル一覧キャッシュ
 # Streamlit は rerun 毎に import 済みモジュールは維持されるので、
 # モジュールレベル変数でキャッシュするだけで十分。
+#
+# 成功時は 10 秒、失敗時 (LM Studio 不達) は 60 秒キャッシュする。
+# 失敗時に毎 rerun ごとに 3 秒待つと UX が非常に悪いため。
 # ------------------------------------------------------------------
-_CACHE_TTL = 10.0  # seconds
+_CACHE_TTL_OK = 10.0      # seconds (成功時)
+_CACHE_TTL_ERR = 60.0     # seconds (失敗時)
 _cache_at: float = 0.0
 _cache_payload: list[dict] = []
 _cache_error: str | None = None
@@ -51,10 +55,11 @@ def _fetch_from_api(timeout: float) -> list[dict]:
     return out
 
 
-def fetch_models(timeout: float = 3.0, force_refresh: bool = False) -> list[dict]:
+def fetch_models(timeout: float = 1.5, force_refresh: bool = False) -> list[dict]:
     """LM Studio からモデル一覧を取得する。失敗時は env 既定値 1〜2 件を返す。
 
-    - 10 秒の簡易メモリキャッシュを挟むため、Streamlit rerun で叩きすぎない
+    - 成功時 10 秒 / 失敗時 60 秒のメモリキャッシュ (LM Studio 不達で毎 rerun
+      ごとに秒単位の遅延が入るのを防ぐ)
     - private モード以外では env 既定値だけを返す (実通信なし)
     - LM Studio が落ちている場合も env 既定値フォールバック (UI は動く)
     """
@@ -64,7 +69,9 @@ def fetch_models(timeout: float = 3.0, force_refresh: bool = False) -> list[dict
         return _fallback_models()
 
     now = time.time()
-    if not force_refresh and _cache_payload and (now - _cache_at) < _CACHE_TTL:
+    # 成功時と失敗時で TTL を切り替える
+    ttl = _CACHE_TTL_ERR if _cache_error else _CACHE_TTL_OK
+    if not force_refresh and _cache_payload and (now - _cache_at) < ttl:
         return _cache_payload
 
     try:
@@ -168,15 +175,15 @@ def _project_config_model(field: str) -> str | None:
 
 
 def current_embed_model() -> str:
-    """埋め込みモデル ID を解決する (v7.1: プロジェクト固定モデル優先)。
+    """埋め込みモデル ID を解決する (v7.0-private.2: プロジェクト固定モデル優先)。
 
     優先順位:
-      1. アクティブプロジェクトの `config.embedding_model` (最優先、v7.1)
+      1. アクティブプロジェクトの `config.embedding_model` (最優先、v7.0-private.2)
       2. session_state["apollo_embed_model_select"]
       3. apollo_config.EMBEDDING_MODEL (env)
       4. LM Studio で最初に見つかった embedding 系モデル
 
-    v7.1 の意図: プロジェクトは「固定ベクトル空間」であるため、session_state
+    v7.0-private.2 の意図: プロジェクトは「固定ベクトル空間」であるため、session_state
     オーバーライドより config が強い。UI 側で session_state を書き換えようとしても
     現在のプロジェクトには影響しない (プロジェクト作成時に固定する)。
     """

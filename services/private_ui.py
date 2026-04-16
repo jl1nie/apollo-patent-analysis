@@ -25,7 +25,7 @@ import apollo_config
 def render_patent_picker_section() -> None:
     """特許タブの最上部に表示するプロジェクトダッシュボード + サーバファイル picker。
 
-    v7.1 からは以下を 1 つの expander にまとめる:
+    v7.0-private.2 からは以下を 1 つの expander にまとめる:
     - プロジェクトサマリ (名前・埋め込みモデル・Mission Objective・作成日)
     - タブ別詳細 (Files / Snapshots / CAPCOM Data / Reports)
     - サーバ保存ファイルからのロード UI (従来機能を維持)
@@ -433,57 +433,59 @@ def _render_cache_index_table() -> None:
 
     同じ CSV を異なる埋め込みモデルで前処理すると別行になる。各行に「復元」
     「削除」ボタン。削除時は pickle に加えて対応する npy キャッシュも掃除する。
+
+    v7.0-private.2 からはダッシュボード expander 内から呼ばれるため、自身は expander を
+    使わず見出し + 内容のみで描画する (nested expander エラー回避)。
     """
     from services import analysis_state as st_state
 
     items = st_state.list_sessions(label="patent")
-    header = f"🗃️ 前処理済みキャッシュ ({len(items)} 件)"
-    with st.expander(header, expanded=bool(items)):
-        if not items:
-            st.caption(
-                "まだ前処理済みキャッシュはありません。CSV をアップロードして"
-                "「前処理実行」タブで分析エンジンを起動すると、モデル別に自動保存されます。"
-            )
-            return
-
+    st.markdown(f"**🗃️ 前処理済みキャッシュ ({len(items)} 件)**")
+    if not items:
         st.caption(
-            "💡 同じ CSV を異なる埋め込みモデルで前処理すると、モデル別に別行として"
-            "保存されます。サイドバーからモデルを切り替えて再前処理すると増えていきます。"
+            "まだ前処理済みキャッシュはありません。CSV をアップロードして"
+            "「前処理実行」タブで分析エンジンを起動すると、モデル別に自動保存されます。"
         )
+        return
 
-        # 列見出し
-        h1, h2, h3, h4, h5, h6 = st.columns([3, 3, 1, 1, 1, 2])
-        h1.markdown("**ファイル**")
-        h2.markdown("**埋め込みモデル**")
-        h3.markdown("**行数**")
-        h4.markdown("**サイズ**")
-        h5.markdown("**更新**")
-        h6.markdown("**操作**")
+    st.caption(
+        "💡 同じ CSV を異なる埋め込みモデルで前処理すると、モデル別に別行として"
+        "保存されます。サイドバーからモデルを切り替えて再前処理すると増えていきます。"
+    )
 
-        for it in items:
-            ck = it["content_key"]
-            fname = it.get("filename", "?")
-            mid = it.get("model_id", "?")
-            rows = it.get("rows", 0)
-            size_mb = it.get("size_mb") or 0
-            mtime = it.get("mtime") or 0
+    # 列見出し
+    h1, h2, h3, h4, h5, h6 = st.columns([3, 3, 1, 1, 1, 2])
+    h1.markdown("**ファイル**")
+    h2.markdown("**埋め込みモデル**")
+    h3.markdown("**行数**")
+    h4.markdown("**サイズ**")
+    h5.markdown("**更新**")
+    h6.markdown("**操作**")
 
-            c1, c2, c3, c4, c5, c6 = st.columns([3, 3, 1, 1, 1, 2])
-            c1.caption(fname)
-            c2.caption(mid)
-            c3.caption(f"{rows:,}" if rows else "-")
-            c4.caption(f"{size_mb:.1f} MB" if size_mb else "-")
-            c5.caption(_relative_time(mtime))
+    for it in items:
+        ck = it["content_key"]
+        fname = it.get("filename", "?")
+        mid = it.get("model_id", "?")
+        rows = it.get("rows", 0)
+        size_mb = it.get("size_mb") or 0
+        mtime = it.get("mtime") or 0
 
-            with c6:
-                b1, b2 = st.columns(2)
-                with b1:
-                    if st.button("復元", key=f"cache_restore_{ck}", use_container_width=True):
-                        _restore_from_cache(ck, fname)
-                with b2:
-                    if st.button("削除", key=f"cache_delete_{ck}", use_container_width=True):
-                        _delete_cache_entry(ck)
-                        st.rerun()
+        c1, c2, c3, c4, c5, c6 = st.columns([3, 3, 1, 1, 1, 2])
+        c1.caption(fname)
+        c2.caption(mid)
+        c3.caption(f"{rows:,}" if rows else "-")
+        c4.caption(f"{size_mb:.1f} MB" if size_mb else "-")
+        c5.caption(_relative_time(mtime))
+
+        with c6:
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button("復元", key=f"cache_restore_{ck}", use_container_width=True):
+                    _restore_from_cache(ck, fname)
+            with b2:
+                if st.button("削除", key=f"cache_delete_{ck}", use_container_width=True):
+                    _delete_cache_entry(ck)
+                    st.rerun()
 
 
 def _relative_time(ts: float) -> str:
@@ -815,7 +817,7 @@ def _render_session_diagnostic() -> None:
 def _render_model_selector() -> None:
     """LM Studio のモデル一覧から埋め込み / 推論モデルを selectbox で選ぶ。
 
-    v7.1: 埋め込みモデルはプロジェクト作成時に固定されるため read-only 表記。
+    v7.0-private.2: 埋め込みモデルはプロジェクト作成時に固定されるため read-only 表記。
     推論モデルは従来通り selectbox で変更可能 (レポート生成ごとに試したい要求に対応)。
     """
     from services import lm_studio_models
