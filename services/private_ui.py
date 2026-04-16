@@ -24,6 +24,36 @@ import streamlit as st
 import apollo_config
 
 
+def render_project_banner() -> None:
+    """Mission Control タイトル直下に表示するプロジェクトコンテキスト banner (Track J)。
+
+    サイドバーの selector と Mission Control の内容が同じプロジェクトに紐付いて
+    いることを明示する。hosted モードでは no-op。
+    """
+    if not apollo_config.IS_PRIVATE:
+        return
+    try:
+        from services import projects
+
+        active = projects.get_active()
+        cfg = projects.get_config(active)
+        if not cfg:
+            return
+        name = cfg.get("name", active)
+        embed_model = cfg.get("embedding_model", "?")
+        st.markdown(
+            f"<div style='padding:8px 12px;background:#eef2f7;border-left:4px solid #003366;"
+            f"border-radius:4px;margin-bottom:12px;'>"
+            f"📂 <b>アクティブプロジェクト: {name}</b>  "
+            f"&nbsp;|&nbsp;  🔒 埋め込み: <code>{embed_model}</code>  "
+            f"&nbsp;|&nbsp;  <span style='color:#666;'>⬅️ 切替はサイドバーから</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def render_patent_picker_section() -> None:
     """特許タブの最上部に表示するプロジェクトダッシュボード + サーバファイル picker。
 
@@ -258,7 +288,9 @@ def _render_project_dashboard() -> None:
     created_at = cfg.get("created_at", "")[:10]
     updated_at = cfg.get("updated_at", "")
 
-    header = f"📂 プロジェクト: {name}  |  埋め込み: `{embed_model}`"
+    # v7.0-private.2 Track J: プロジェクト名 / 埋め込みモデルはサイドバー & タイトル
+    # 下 banner に集約。ここではデータ管理 UI とだけ明示する (重複排除)
+    header = "📁 プロジェクトデータ (ファイル / Snapshot / CAPCOM / Reports)"
     with st.expander(header, expanded=True):
         c1, c2, c3 = st.columns([2, 2, 3])
         c1.caption(f"作成: {created_at}")
@@ -887,14 +919,29 @@ def _render_project_selector() -> None:
         projects.set_active(active)
 
     picked = st.selectbox(
-        "📂 プロジェクト",
+        "📂 アクティブプロジェクト (以下の全データと紐付け)",
         options=ids,
         index=ids.index(active),
         format_func=lambda pid: labels.get(pid, pid),
         key="apollo_project_selector",
+        help="切替えると Mission Control・各分析モジュール・VOYAGER・CAPCOM すべてが"
+        "このプロジェクトのデータを参照するように切替わります。",
     )
     if picked != active:
         _switch_project(picked)
+
+    # Track J: mini-stats (現在のプロジェクトの件数サマリ)
+    try:
+        active_info = next((p for p in all_projects if p["project_id"] == picked), None)
+        if active_info:
+            fcount = active_info.get("file_count", 0)
+            scount = active_info.get("state_count", 0)
+            mtime = active_info.get("mtime", 0)
+            st.caption(
+                f"📄 ファイル: {fcount} / 🧪 前処理: {scount} / ⏱ {_relative_time(mtime)}"
+            )
+    except Exception:  # noqa: BLE001
+        pass
 
     # 新規作成 / 削除
     c1, c2 = st.columns(2)

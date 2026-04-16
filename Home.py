@@ -96,7 +96,10 @@ def smart_map_index(current_value, options, keywords):
 
 utils.render_sidebar()
 
-st.title("🛰️ Mission Control") 
+st.title("🛰️ Mission Control")
+# APOLLO Private Track J: アクティブプロジェクト banner (hosted モードでは no-op)
+from services.private_ui import render_project_banner
+render_project_banner()
 st.markdown("ここは、全分析モジュールで共通のデータ準備を行う「ミッション・コントロール（データハブ）」です。")
 
 # --- アプリケーション初期化 ---
