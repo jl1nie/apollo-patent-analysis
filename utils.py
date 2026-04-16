@@ -88,6 +88,9 @@ def get_npl_stopwords():
 def render_sidebar():
     """共通サイドバーを描画する"""
 
+    # APOLLO Private: 認証ゲート (hosted モードでは no-op)
+    from services.auth import require_login_if_private
+    require_login_if_private()
 
     # 共通CSSの適用
     st.markdown("""

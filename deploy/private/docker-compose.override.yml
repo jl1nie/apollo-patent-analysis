@@ -1,0 +1,16 @@
+# WSL2 環境での検証用オーバーライド
+#
+# WSL2 では `host.docker.internal:host-gateway` が docker0 ブリッジ (172.18.0.1)
+# を指してしまい、Windows 側で動いている LM Studio に到達できない。
+# WSL のデフォルトゲートウェイ = Windows 側 IP を extra_hosts で明示的にマップする。
+#
+# WSL のゲートウェイ IP は `ip route | grep default` で取得可能。環境によって
+# 変わるので必要に応じて書き換えること (例: 172.17.176.1 / 172.20.32.1 等)。
+#
+# 本ファイルはローカル検証用のみ。docker-compose.yml に混ぜ込まず override に
+# 分離してコミット対象外にする。
+
+services:
+  apollo:
+    extra_hosts:
+      - "host.docker.internal:172.17.176.1"

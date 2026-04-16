@@ -6,38 +6,7 @@ import datetime
 import utils
 import matplotlib.pyplot as plt
 utils.configure_matplotlib_font()
-import google.generativeai as genai
-
-
-# ==================================================================
-# --- LLMClient (Gemini API) ---
-# ==================================================================
-class LLMClient:
-    """Gemini API クライアント（VOYAGER レポート生成用）"""
-
-    def __init__(self, api_key, model_name="gemini-2.5-flash"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
-
-    def generate_text(self, system_prompt, user_prompt, max_retries=3):
-        """テキスト生成（レートリミット対応）"""
-        import time as _time
-        for attempt in range(max_retries):
-            try:
-                response = self.model.generate_content(
-                    f"{system_prompt}\n\n{user_prompt}",
-                    generation_config=genai.GenerationConfig(
-                        temperature=0.7,
-                        max_output_tokens=65536,
-                    ),
-                )
-                return response.text
-            except Exception as e:
-                if '429' in str(e) and attempt < max_retries - 1:
-                    wait = 60
-                    _time.sleep(wait)
-                    continue
-                raise
+from services.llm import create_client
 
 
 # ==================================================================
@@ -594,25 +563,32 @@ if 'voyager_prompt_preview_data' in st.session_state:
         st.code(preview.get('p2_template', ''), language=None)
 
 # ==================================================================
-# --- VOYAGER レポート生成 (Gemini API) — col_act の外に配置 ---
+# --- VOYAGER レポート生成 (LLM) — col_act の外に配置 ---
 # ==================================================================
+import apollo_config as _apollo_config
 st.markdown("---")
-st.markdown("### 🤖 VOYAGER レポート生成 (Gemini API)")
-st.markdown("収集したエビデンスからGemini APIでレポートの骨格を自動生成します。")
-
-col_gem1, col_gem2 = st.columns([2, 1])
-with col_gem1:
-    gemini_key = st.text_input("Gemini API Key:", type="password", key="voyager_gemini_key",
-                               help="Google AI Studio で取得できます: https://aistudio.google.com/apikey")
+if _apollo_config.IS_PRIVATE:
+    st.markdown(f"### 🤖 VOYAGER レポート生成 (Local LLM: {_apollo_config.CHAT_MODEL})")
+    st.markdown(f"収集したエビデンスから LM Studio のローカル LLM (`{_apollo_config.CHAT_MODEL}`) でレポートの骨格を自動生成します。")
+    gemini_key = ""  # private モードでは未使用 (factory が無視する)
+    col_gem2, = st.columns(1)
+else:
+    st.markdown("### 🤖 VOYAGER レポート生成 (Gemini API)")
+    st.markdown("収集したエビデンスからGemini APIでレポートの骨格を自動生成します。")
+    col_gem1, col_gem2 = st.columns([2, 1])
+    with col_gem1:
+        gemini_key = st.text_input("Gemini API Key:", type="password", key="voyager_gemini_key",
+                                   help="Google AI Studio で取得できます: https://aistudio.google.com/apikey")
 with col_gem2:
     report_mode = st.selectbox("レポートモード:",
         ["標準分析 (Standard)", "詳細戦略 (Strategic Deep Dive)", "市場統合分析 (Market Intelligence)"],
         key="voyager_report_mode")
 
+_llm_ready = _apollo_config.IS_PRIVATE or bool(gemini_key)
 if st.button("📝 レポート生成", type="primary", key="voyager_generate_report",
-             disabled=not gemini_key or not snapshots or len(mission_objective) <= 5):
+             disabled=not _llm_ready or not snapshots or len(mission_objective) <= 5):
     try:
-        client = LLMClient(api_key=gemini_key)
+        client = create_client(api_key=gemini_key)
 
         progress = st.progress(0.0)
         status = st.empty()
