@@ -146,13 +146,13 @@ class LMStudioLLMClient:
         from openai import OpenAI  # 遅延 import
         from services import lm_studio_models
 
-        # OpenAI SDK 既定の 600s では VOYAGER レポート生成 (30B モデルで 2K-3K 文字
-        # 生成) でタイムアウトすることがある。apollo_config の LM_STUDIO_TIMEOUT
-        # (env `LM_STUDIO_TIMEOUT`、既定 1800s) で上書きする。
+        # OpenAI SDK 既定の 600s では VOYAGER Phase 3 (Strategist) 単発でも 30-60 分
+        # 級になるため不足。apollo_config の LM_STUDIO_TIMEOUT (env、既定 7200s)
+        # で上書きする。`0` / 負値なら無制限 (None)。
         self._client = OpenAI(
             api_key=api_key or apollo_config.LM_STUDIO_API_KEY,
             base_url=apollo_config.LM_STUDIO_BASE_URL,
-            timeout=apollo_config.LM_STUDIO_TIMEOUT,
+            timeout=apollo_config.resolve_lm_studio_timeout(),
         )
         # 引数が明示されていなければサイドバー selectbox の最新値を参照する
         self.model_name = model_name or lm_studio_models.current_chat_model()
@@ -189,9 +189,17 @@ class LMStudioLLMClient:
         start_ts = time.time()
         last_ui = 0.0
         chunk_count = 0
+        finish_reason: str | None = None
 
         for chunk in stream:
             chunk_count += 1
+            # finish_reason は最終チャンクでのみセットされる (stop / length / content_filter 等)
+            try:
+                fr = chunk.choices[0].finish_reason
+                if fr:
+                    finish_reason = fr
+            except (AttributeError, IndexError, TypeError):
+                pass
             try:
                 delta = chunk.choices[0].delta.content
             except (AttributeError, IndexError, TypeError):
@@ -222,13 +230,25 @@ class LMStudioLLMClient:
 
         # 生成完了: プレースホルダをクリア (次段の UI を邪魔しない)
         full_result = "".join(accumulated)
+        truncated = finish_reason == "length"
         if placeholder is not None:
             try:
                 elapsed = time.time() - start_ts
-                placeholder.caption(
-                    f"✅ 生成完了 · {len(full_result):,} 文字 · "
-                    f"{elapsed:.0f}s · {chunk_count:,} chunks"
-                )
+                if truncated:
+                    # max_tokens 到達: 本文は残るが途中で切れているため、必ず気付かせる
+                    placeholder.error(
+                        f"⚠️ **出力が max_tokens で途中打ち切り** "
+                        f"(finish_reason=length) · {len(full_result):,} 文字 · "
+                        f"{elapsed:.0f}s · {chunk_count:,} chunks\n\n"
+                        f"`LM_STUDIO_MAX_TOKENS` (現在 {apollo_config.LM_STUDIO_MAX_TOKENS:,}) "
+                        f"を引き上げて再実行してください。生成物は保存されますが本文末尾が不完全です。"
+                    )
+                else:
+                    placeholder.caption(
+                        f"✅ 生成完了 · {len(full_result):,} 文字 · "
+                        f"{elapsed:.0f}s · {chunk_count:,} chunks "
+                        f"(finish_reason={finish_reason or 'unknown'})"
+                    )
             except Exception:  # noqa: BLE001
                 pass
 

@@ -30,9 +30,17 @@ LM_STUDIO_BASE_URL: str = os.environ.get(
     "LM_STUDIO_BASE_URL", "http://host.docker.internal:1234/v1"
 )
 LM_STUDIO_API_KEY: str = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
-# 長文生成用のタイムアウト (秒)。30B クラスのモデルで VOYAGER レポート生成は
-# 数分〜10 分超かかることがあるため OpenAI SDK の既定 600s では不十分。
-LM_STUDIO_TIMEOUT: float = float(os.environ.get("LM_STUDIO_TIMEOUT", "1800"))
+# 長文生成用のタイムアウト (秒)。30B クラスのモデルで VOYAGER Phase 3 (Strategist)
+# は max_tokens=65536 まで埋まりうるため、20-40 tok/s のスループットで 30-60 分級。
+# OpenAI SDK の既定 600s や旧既定 1800s では 1 呼び出し分すら足りないことがある。
+# `0` (または負値) を指定すると `None` に解釈され、SDK 側の timeout が無制限化される
+# (Streaming 進捗 UI で目視監視する前提)。
+LM_STUDIO_TIMEOUT: float = float(os.environ.get("LM_STUDIO_TIMEOUT", "7200"))
+
+
+def resolve_lm_studio_timeout() -> float | None:
+    """OpenAI SDK の `timeout=` にそのまま渡せる値を返す (0 以下は None)。"""
+    return LM_STUDIO_TIMEOUT if LM_STUDIO_TIMEOUT and LM_STUDIO_TIMEOUT > 0 else None
 # chat.completions.create の max_tokens 既定値。
 # VOYAGER 戦略レポート (Phase 3 strategist) は 20K+ トークンに達することがあり、
 # 上流 v7 の Gemini 呼び出しは max_output_tokens=65536 を使っている。同等に合わせる。

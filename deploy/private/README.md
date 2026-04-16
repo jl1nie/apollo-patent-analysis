@@ -116,7 +116,7 @@ Docker Desktop の **Containers** タブから:
 | `LM_STUDIO_BASE_URL` | `http://host.docker.internal:1234/v1` | LAN の別 PC の LM Studio を使う場合は IP に変更 |
 | `APOLLO_EMBEDDING_MODEL` | `text-embedding-qwen3-embedding-4b` | default プロジェクトの埋め込みモデル (プロジェクト作成時に個別指定可) |
 | `APOLLO_CHAT_MODEL` | `qwen/qwen3-30b-a3b-2507` | default プロジェクトの推論モデル (サイドバーで変更可) |
-| `LM_STUDIO_TIMEOUT` | `1800` (秒) | 30B モデルで長文生成時のタイムアウト安全網 |
+| `LM_STUDIO_TIMEOUT` | `7200` (秒) | 1 LLM 呼び出しあたりのタイムアウト。30B で VOYAGER Phase 3 (Strategist) は 30-60 分級。`0` で無制限 |
 | `LM_STUDIO_MAX_TOKENS` | `65536` | 1 レスポンスの最大トークン数 (Gemini 互換) |
 | `APOLLO_COOKIE_SECRET` | コンテナ毎にランダム生成 | 32 文字以上を指定すると Docker Desktop の再起動後もログイン状態を保持 |
 
@@ -149,7 +149,7 @@ cache/embeddings/*.npy            # 全プロジェクト共有のベクトル�
 | サイドバーに `⚠️ LM Studio 接続失敗` | 同上。失敗時は 60 秒キャッシュされるので、復旧後は「🔄 モデル一覧を再取得」で即時更新 |
 | 埋め込みが途中で止まる | LM Studio 側で埋め込みモデルが Load されていない |
 | Vision モデルに切替えたのに画像が反映されない | LM Studio でそのモデルが Load されているか確認。vision 非対応モデルを選ぶと警告が出てテキストのみで fallback |
-| レポート生成が長すぎて timeout | `LM_STUDIO_TIMEOUT` を長く (例: `3600` = 1 時間)。Streaming で進捗見える |
+| レポート生成が長すぎて timeout | 既定は `7200` (2 時間)。それでも足りなければ `LM_STUDIO_TIMEOUT=0` で無制限 (Streaming の進捗 UI で目視監視)。途中 timeout すると max_tokens 到達前でも生成途中の出力がすべて破棄される |
 | OpenALEX タブで「エアギャップ環境」警告 | 想定通り。Private モードでは外部 API は使えません |
 | 再起動でログインを毎回求められる | 環境変数 `APOLLO_COOKIE_SECRET` に 32 文字以上の固定値を設定 |
 | ポート 8501 が使われている | Run ダイアログの Host port を `18501` 等に変更 → <http://localhost:18501> でアクセス |
