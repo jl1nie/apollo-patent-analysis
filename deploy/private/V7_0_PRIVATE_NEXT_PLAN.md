@@ -501,6 +501,30 @@ docker exec apollo-private-v7 ls -la /var/lib/apollo/projects/default/state/
 
 ### 7.1 v7.0-private.3 候補 (実装確度高)
 
+- **Track J: プロジェクト↔Mission Control の関係を明示化 (UX 改善)**
+  - 問題: サイドバー左の「📂 プロジェクト selectbox」と、Mission Control 中央の
+    「📂 プロジェクト: XXX | 埋め込み: yyy」ダッシュボードヘッダが独立ウィジェット
+    に見え、プロジェクト切替が Mission Control 全体 (ファイルアップロード・前処理・
+    各分析モジュール) と紐付いていることが読み取れない (2026-04-16 ヒアリング)
+  - 採用案: **C = A + B の併用**
+    - **A. ダッシュボード側の重複解消** (V7 touch ゼロ):
+      - `services/private_ui.py::_render_project_dashboard` の expander ヘッダから
+        「プロジェクト名 + 埋め込みモデル」表示を削除
+      - 代わりに「📁 プロジェクトデータ (ファイル / Snapshot / CAPCOM / Reports)」
+        のように機能ラベルだけにする
+      - ヘッダ直下の caption 行 (作成日 / 最終更新 / 件数) は残す
+    - **B. Mission Control タイトル直下に banner** (V7 本体 `Home.py` 1 行追加):
+      - `st.title("🛰️ Mission Control")` の直後に
+        `services.private_ui.render_project_banner()` を呼ぶ (hosted モードでは no-op)
+      - banner 内容: 「📂 アクティブプロジェクト: **CNF 特許分析** | 🔒 埋め込み: `qwen3-4b` |
+        ⬅️ 切替はサイドバーから」 (1 行でコンパクト)
+      - V7 touch は 1 行 (Track E の 7 行改修と同じ分類の例外)
+    - **サイドバー selectbox 強化**:
+      - ラベルを「📂 アクティブプロジェクト (以下の全データと紐付け)」に
+      - selectbox 直下に mini-stats caption 「📄 特許: 3,200件 / 🧪 前処理: 2 種 / ⏱ 2h前」
+  - 期待効果: 初めて触るユーザが「サイドバー ↔ メイン」が同じプロジェクトを指している
+    ことを 1 秒で理解できる。既存ユーザの慣れた動線も壊さない
+
 - **Track I: Vision 専用モデル選択の分離**
   - 現状: VOYAGER Phase 1 で `images=` ありの呼び出しは `current_chat_model()` が
     返す「推論モデル」を使う。推論モデルに `qwen/qwen3-30b-a3b-2507` のような
