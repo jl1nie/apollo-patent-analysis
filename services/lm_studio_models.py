@@ -202,6 +202,39 @@ def current_embed_model() -> str:
     return "text-embedding-qwen3-embedding-4b"
 
 
+def current_vision_model() -> str | None:
+    """Vision 専用モデル ID を解決する (Track I)。
+
+    画像を含む LLM 呼び出し (VOYAGER Phase 1 の multimodal 等) 専用。
+    返り値が None なら multimodal 呼び出しはフォールバックで chat_model を使う
+    (vision 非対応モデルの場合は失敗 → テキストのみで再試行される既存動作)。
+
+    優先順位:
+      1. session_state["apollo_vision_model_select"]
+      2. アクティブプロジェクト config.vision_model (非空なら)
+      3. モデル一覧から自動検出 (id に "vl" / "vision" / "multimodal" / "gemma-3"
+         / "gemma-4" を含む chat モデル)
+      4. None (vision 無指定)
+    """
+    override = _session_override("apollo_vision_model_select")
+    if override:
+        return override
+    pmodel = _project_config_model("vision_model")
+    if pmodel:
+        return pmodel
+    # 自動検出: モデル一覧から vision 対応を探す
+    try:
+        _embed, chat_ids = split_embed_chat(fetch_models())
+        hints = ("vl", "vision", "multimodal", "gemma-3", "gemma-4")
+        for mid in chat_ids:
+            low = mid.lower()
+            if any(h in low for h in hints):
+                return mid
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def current_chat_model() -> str:
     """推論モデル ID を解決する。VOYAGER レポート生成で使う。
 

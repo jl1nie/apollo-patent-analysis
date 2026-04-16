@@ -185,6 +185,7 @@ def create_project(
     chat_model: str,
     description: str = "",
     mission_objective: str = "",
+    vision_model: str | None = None,
 ) -> str:
     """新規プロジェクトを作成し、project_id を返す。
 
@@ -193,6 +194,10 @@ def create_project(
     - `files/{patents,academic,...}`, `state/`, `store/`, `reports/` を作成
 
     hosted モードでは何もせず `apollo_config.DEFAULT_PROJECT_ID` を返す。
+
+    v7.0-private.2 Track I: `vision_model` (省略可) を追加。VOYAGER Phase 1 で
+    画像を送る時のみ使用するモデル (例: qwen/qwen3-vl-8b)。None なら chat_model
+    が fallback として使われる。update_config で後から変更可能。
     """
     if not apollo_config.IS_PRIVATE:
         return apollo_config.DEFAULT_PROJECT_ID
@@ -213,6 +218,7 @@ def create_project(
         "name": name.strip() or project_id,
         "embedding_model": embedding_model,
         "chat_model": chat_model,
+        "vision_model": vision_model or "",
         "description": description,
         "mission_objective": mission_objective,
         "created_at": now,
@@ -248,6 +254,7 @@ def ensure_default_project() -> str:
         "name": "default",
         "embedding_model": apollo_config.EMBEDDING_MODEL,
         "chat_model": apollo_config.CHAT_MODEL,
+        "vision_model": "",
         "description": "v7.0 からの自動移行先 / 初期起動時の既定プロジェクト",
         "mission_objective": "",
         "created_at": now,

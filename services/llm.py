@@ -266,8 +266,24 @@ class LMStudioLLMClient:
         PNG 画像を base64 data URI として `image_url` content block に並べる。
         vision 対応モデル (例: Qwen2-VL, Gemma-Vision) が LM Studio にロード
         されている必要がある。
+
+        v7.0-private.2 Track I: `current_vision_model()` が non-empty を返せば
+        そのモデルに自動スイッチ (通常の chat_model は text-only かもしれない
+        ため)。None の場合は chat_model の self.model_name にフォールバック。
         """
         import base64
+        from services import lm_studio_models
+
+        # Vision 専用モデルがあればそれを使う (Track I)
+        vision_model = lm_studio_models.current_vision_model()
+        effective_model = vision_model or self.model_name
+        if vision_model and vision_model != self.model_name:
+            try:
+                import streamlit as st
+
+                st.caption(f"🖼️ Vision モデルに切替: `{vision_model}` (chat: `{self.model_name}`)")
+            except Exception:  # noqa: BLE001
+                pass
 
         last_err: Exception | None = None
         for attempt in range(max_retries):
@@ -282,7 +298,7 @@ class LMStudioLLMClient:
                         }
                     )
                 stream = self._client.chat.completions.create(
-                    model=self.model_name,
+                    model=effective_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": content},

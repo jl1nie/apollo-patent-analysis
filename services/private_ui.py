@@ -935,6 +935,15 @@ def _render_project_create_form() -> None:
             chat_ids or [chat_default],
             key="proj_create_chat",
         )
+        vision_opts = ["(未指定)"] + (chat_ids or [chat_default])
+        vision_choice_raw = st.selectbox(
+            "🖼️ Vision モデル (画像送信用、任意)",
+            vision_opts,
+            key="proj_create_vision",
+            help="qwen/qwen3-vl-8b 等の vision 対応モデル。"
+            "VOYAGER が snapshot 画像を送る時だけ使用。未指定なら chat モデルで試行。",
+        )
+        vision_choice = "" if vision_choice_raw == vision_opts[0] else vision_choice_raw
         description = st.text_input("説明 (任意)", key="proj_create_desc")
         mission = st.text_area(
             "Mission Objective (任意)",
@@ -953,6 +962,7 @@ def _render_project_create_form() -> None:
                         chat_model=chat_choice,
                         description=description,
                         mission_objective=mission,
+                        vision_model=vision_choice,
                     )
                     st.success(f"プロジェクト '{pid}' を作成しました")
                     st.session_state.pop("_show_proj_create", None)
@@ -1112,6 +1122,29 @@ def _render_model_selector() -> None:
         )
     else:
         st.caption("推論モデルが見つかりません")
+
+    # Vision モデル (VOYAGER 画像送信時、Track I)
+    if chat_ids:
+        vision_opts = ["(未指定 - chat モデルで試行)"] + chat_ids
+        default_vision = lm_studio_models.current_vision_model()
+        try:
+            default_idx_v = vision_opts.index(default_vision) if default_vision else 0
+        except ValueError:
+            default_idx_v = 0
+        picked = st.selectbox(
+            "🖼️ Vision モデル (画像送信用)",
+            vision_opts,
+            index=default_idx_v,
+            key="_vision_model_picker",
+            help="VOYAGER Phase 1 で snapshot 画像を送る時だけ使うモデル。"
+            "Qwen3-VL / Gemma-3 / Gemma-4 等の vision 対応モデルを選択してください。"
+            "未指定なら chat モデルが試され、非対応時はテキストで fallback します。",
+        )
+        # session_state override 用のキーに反映 (selectbox の key と分離して
+        # "未指定" を空文字として扱うため)
+        st.session_state["apollo_vision_model_select"] = (
+            "" if picked == vision_opts[0] else picked
+        )
 
     if st.button("🔄 モデル一覧を再取得", key="apollo_model_refresh", use_container_width=True):
         lm_studio_models.fetch_models(force_refresh=True)
