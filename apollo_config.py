@@ -22,6 +22,9 @@ CACHE_DIR: Path = DATA_ROOT / "cache" / "embeddings"
 UPLOADS_DIR: Path = DATA_ROOT / "uploads"
 SESSION_DIR: Path = DATA_ROOT / "sessions"
 INPUTS_DIR: Path = DATA_ROOT / "inputs"
+# v7.1: プロジェクト階層のルート
+PROJECTS_ROOT: Path = DATA_ROOT / "projects"
+DEFAULT_PROJECT_ID: str = "default"
 
 LM_STUDIO_BASE_URL: str = os.environ.get(
     "LM_STUDIO_BASE_URL", "http://host.docker.internal:1234/v1"
@@ -103,7 +106,7 @@ def ensure_directories() -> None:
     """
     if not IS_PRIVATE:
         return
-    for d in [CACHE_DIR, UPLOADS_DIR, SESSION_DIR, INPUTS_DIR]:
+    for d in [CACHE_DIR, UPLOADS_DIR, SESSION_DIR, INPUTS_DIR, PROJECTS_ROOT]:
         d.mkdir(parents=True, exist_ok=True)
 
 
