@@ -499,12 +499,41 @@ docker exec apollo-private-v7 ls -la /var/lib/apollo/projects/default/state/
 
 ## 7. 非対象 / 今後の拡張
 
-- **プロジェクト間のデータコピー / ファイル移動 UI**: v7.2 以降
-- **マルチユーザー / プロジェクトの共有・権限管理**: v7.2 以降 (今は admin 1 人想定)
-- **CAPCOM ZIP のプロジェクト単位差分 export**: v7.2 以降
-- **報告書履歴の diff 表示**: v7.2 以降
-- **プロジェクトのテンプレート / prefab 構成**: v7.2 以降
-- **旧 v7.0 sessions/ ディレクトリの削除 UI**: 安全のため v7.0-private.2 では残しておく (マイグレーション後に手動削除してもらう)
+### 7.1 v7.0-private.3 候補 (実装確度高)
+
+- **Track I: Vision 専用モデル選択の分離**
+  - 現状: VOYAGER Phase 1 で `images=` ありの呼び出しは `current_chat_model()` が
+    返す「推論モデル」を使う。推論モデルに `qwen/qwen3-30b-a3b-2507` のような
+    text-only モデルを選んでいると multimodal 呼び出しが失敗 → テキスト fallback
+    に落ちる (`LMStudioLLMClient.generate_text` の except 節で実装済み)
+  - 狙い: 強力な text-only モデル (30B MoE 等) の text 生成品質を犠牲にせず、
+    画像送信時だけ vision 専用モデル (`qwen/qwen3-vl-8b` 等) に自動スイッチ
+  - 実装範囲:
+    1. `projects/<id>/config.json` に `vision_model` (optional) フィールド追加
+    2. `services/lm_studio_models.py` に `current_vision_model()` 追加
+       (解決順: session_state `apollo_vision_model_select` → project config →
+       モデル一覧から VL/vision/multimodal を含むモデル自動検出 → None)
+    3. サイドバーに「Vision モデル」selectbox 追加 (推論モデルとは別枠)
+    4. `services/llm.py` `_generate_multimodal` 内で vision_model を優先使用
+       (あれば切替、なければ chat_model のまま試して失敗したら fallback)
+  - 上流 v7 の状態: upstream は Gemini 2.5-flash のみ (multimodal 可) だが
+    VOYAGER コードが `module_images` を収集するだけで `generate_content` に
+    渡していないため、**実質 vision 非対応**。v7.0-private.2 Track E で初めて
+    vision 活性化したが、モデル選択が推論モデルと共通なのが課題
+
+### 7.2 v7.2 以降 (アイデア段階)
+
+- **プロジェクト間のデータコピー / ファイル移動 UI**
+- **マルチユーザー / プロジェクトの共有・権限管理** (今は admin 1 人想定)
+- **CAPCOM ZIP のプロジェクト単位差分 export**
+- **報告書履歴の diff 表示**
+- **プロジェクトのテンプレート / prefab 構成**
+- **旧 v7.0 sessions/ ディレクトリの削除 UI**: 安全のため v7.0-private.2 では
+  残しておく (マイグレーション後に手動削除してもらう)
+- **CORE ページ / VOYAGER 外部 LLM プロンプトタブのローカル LLM 対応**:
+  Track H は共通関数 `utils.render_ai_label_assistant` / `utils_ai.render_ai_insight_button`
+  だけカバー。ページ個別で共通関数化されていない AI プロンプト生成はページ本体
+  の改修が必要 (V7 touch zero から外れる)
 
 ---
 
