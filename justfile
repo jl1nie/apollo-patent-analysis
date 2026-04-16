@@ -3,7 +3,9 @@ set shell := ["bash", "-cu"]
 
 DOCKER_NAMESPACE := env_var_or_default("DOCKER_NAMESPACE", "jl1nie")
 IMAGE_NAME := "apollo-private"
-VERSION := `grep '^version' pyproject.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/'`
+# pyproject の PEP 440 local version (7.0.0+private.2) を Docker tag に
+# 変換 (+ → -)。Docker tag は [A-Za-z0-9_.-] のみ許容のため。
+VERSION := `grep '^version' pyproject.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/' | tr '+' '-'`
 
 default:
     @just --list
