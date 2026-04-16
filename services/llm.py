@@ -16,8 +16,44 @@ import は失敗しない。逆に hosted モードでは `openai` パッケー�
 from __future__ import annotations
 
 import time
+import traceback
+from datetime import datetime
+from pathlib import Path
 
 import apollo_config
+
+
+def _llm_debug_log(event: str, **fields) -> None:
+    """LM Studio 呼び出しの診断ログを `/var/lib/apollo/llm_debug.log` に追記する。
+
+    タイムアウト等の実例を事後解析するため、OpenAI SDK / httpx レベルの例外
+    クラスや経過時間を保存する。ファイルへの書き込み失敗は握り潰す。
+    """
+    if not apollo_config.IS_PRIVATE:
+        return
+    try:
+        log_path = apollo_config.DATA_ROOT / "llm_debug.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().isoformat(timespec="milliseconds")
+        parts = [f"[{ts}]", event]
+        for k, v in fields.items():
+            parts.append(f"{k}={v!r}")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(" ".join(parts) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _describe_exception(exc: BaseException) -> str:
+    """例外の型 + cause chain を 1 行で記述する (診断用)。"""
+    chain: list[str] = []
+    cur: BaseException | None = exc
+    while cur is not None:
+        chain.append(f"{type(cur).__module__}.{type(cur).__name__}: {cur}")
+        cur = cur.__cause__ or cur.__context__
+        if len(chain) >= 5:
+            break
+    return " | caused_by | ".join(chain)
 
 
 class GeminiLLMClient:
@@ -229,8 +265,18 @@ class LMStudioLLMClient:
                     pass
                 # fallback: fall through to text-only
 
+        _llm_debug_log(
+            "generate_text.start",
+            model=self.model_name,
+            prompt_chars=len(system_prompt) + len(user_prompt),
+            max_retries=max_retries,
+            max_tokens=apollo_config.LM_STUDIO_MAX_TOKENS,
+            timeout=apollo_config.LM_STUDIO_TIMEOUT,
+        )
         last_err: Exception | None = None
+        call_start = time.time()
         for attempt in range(max_retries):
+            attempt_start = time.time()
             try:
                 stream = self._client.chat.completions.create(
                     model=self.model_name,
@@ -242,9 +288,24 @@ class LMStudioLLMClient:
                     stream=True,
                     **self._max_tokens_kwarg(),
                 )
-                return self._consume_stream(stream)
+                result = self._consume_stream(stream)
+                _llm_debug_log(
+                    "generate_text.success",
+                    attempt=attempt,
+                    elapsed=round(time.time() - call_start, 2),
+                    result_chars=len(result),
+                )
+                return result
             except Exception as e:
                 last_err = e
+                _llm_debug_log(
+                    "generate_text.exception",
+                    attempt=attempt,
+                    elapsed_attempt=round(time.time() - attempt_start, 2),
+                    elapsed_total=round(time.time() - call_start, 2),
+                    exc_chain=_describe_exception(e),
+                    traceback_tail=traceback.format_exc(limit=20)[-2000:],
+                )
                 if attempt < max_retries - 1:
                     time.sleep(5)
                     continue
@@ -285,8 +346,17 @@ class LMStudioLLMClient:
             except Exception:  # noqa: BLE001
                 pass
 
+        _llm_debug_log(
+            "multimodal.start",
+            model=effective_model,
+            prompt_chars=len(system_prompt) + len(user_prompt),
+            image_count=len(images),
+            total_image_bytes=sum(len(i) for i in images),
+        )
         last_err: Exception | None = None
+        call_start = time.time()
         for attempt in range(max_retries):
+            attempt_start = time.time()
             try:
                 content: list[dict] = [{"type": "text", "text": user_prompt}]
                 for png in images:
@@ -307,9 +377,24 @@ class LMStudioLLMClient:
                     stream=True,
                     **self._max_tokens_kwarg(),
                 )
-                return self._consume_stream(stream)
+                result = self._consume_stream(stream)
+                _llm_debug_log(
+                    "multimodal.success",
+                    attempt=attempt,
+                    elapsed=round(time.time() - call_start, 2),
+                    result_chars=len(result),
+                )
+                return result
             except Exception as e:
                 last_err = e
+                _llm_debug_log(
+                    "multimodal.exception",
+                    attempt=attempt,
+                    elapsed_attempt=round(time.time() - attempt_start, 2),
+                    elapsed_total=round(time.time() - call_start, 2),
+                    exc_chain=_describe_exception(e),
+                    traceback_tail=traceback.format_exc(limit=20)[-2000:],
+                )
                 if attempt < max_retries - 1:
                     time.sleep(5)
                     continue

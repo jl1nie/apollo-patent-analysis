@@ -1039,7 +1039,16 @@ CAPCOMデータに含まれるクラスタ動態、ノイズ分析、多様性�
         st.session_state['voyager_generated_report'] = final_report
 
     except Exception as e:
-        st.error(f"レポート生成エラー: {e}")
+        # v7.0-private.2: 例外型 + cause chain を表示 (タイムアウト原因の layer 特定用)
+        import traceback as _tb
+        _chain = []
+        _cur = e
+        while _cur is not None and len(_chain) < 5:
+            _chain.append(f"`{type(_cur).__module__}.{type(_cur).__name__}`: {_cur}")
+            _cur = _cur.__cause__ or _cur.__context__
+        st.error("レポート生成エラー:\n\n" + "\n\n↑ caused by ↑\n\n".join(_chain))
+        with st.expander("詳細トレースバック (private 診断用)", expanded=False):
+            st.code(_tb.format_exc(), language="text")
 
 # ==================================================================
 # --- レポート表示（APOLLO SPACE レベル）---
