@@ -14,6 +14,8 @@ Home.py の編集量を最小化するため、private モード固有の重い 
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -426,6 +428,266 @@ def _render_project_reports_tab(active: str) -> None:
                 )
             except OSError:
                 pass
+
+
+# ==================================================================
+# Track H: ローカル AI サジェスト (LM Studio 直接呼び出し)
+# ==================================================================
+
+
+def render_local_ai_label_assistant(
+    df_source,
+    cluster_col,
+    label_map_key,
+    col_map,
+    tfidf_matrix,
+    feature_names,
+    widget_key_prefix=None,
+) -> None:
+    """private モード用ラベルサジェスト UI。
+
+    `utils.render_ai_label_assistant` の完全な差し替え。既存の「コピー →
+    ChatGPT に貼付」フローは残しつつ、**🤖 LM Studio に直接送信** ボタンを
+    追加。ボタンを押すと現在選択中の推論モデルでレスポンスを取り、結果を
+    JSON 貼付欄に自動流し込みする。
+
+    ユーザは apply ボタンを押すだけで LM Studio の結果が適用される
+    (エアギャップ環境でも AI サジェストが機能する)。
+
+    `apollo_bootstrap.init()` がこの関数を `utils.render_ai_label_assistant`
+    のモンキーパッチ先として登録する。hosted モードでは original を呼ぶ。
+    """
+    import utils  # 原関数を生成系ヘルパ (generate_ai_cluster_prompt) 経由で使うために参照
+
+    with st.expander("🤖 AIによるラベルサジェスト (ローカル LM Studio + 外部 LLM コピー経路)"):
+        st.caption(
+            "エアギャップ環境向け: 🤖 LM Studio に直接送信 で即時適用、または "
+            "プロンプトコピー経由で任意の外部 LLM (ChatGPT/Claude 等) に投げて結果を貼り戻すことも可能。"
+        )
+
+        col_s1, _col_s2 = st.columns([1, 2])
+        with col_s1:
+            n_samples_ai = st.number_input(
+                "1クラスタあたりのサンプル数",
+                min_value=1,
+                value=5,
+                key=f"ai_n_samples_{label_map_key}",
+            )
+
+        if st.button("プロンプトを生成", key=f"ai_gen_btn_{label_map_key}"):
+            target_cols = [col_map.get("title"), col_map.get("abstract")]
+            prompt = utils.generate_ai_cluster_prompt(
+                df_source,
+                cluster_col,
+                target_cols,
+                tfidf_matrix,
+                feature_names,
+                n_samples=n_samples_ai,
+            )
+            st.session_state[f"ai_prompt_{label_map_key}"] = prompt
+
+        prompt_saved = st.session_state.get(f"ai_prompt_{label_map_key}")
+        if prompt_saved:
+            st.code(prompt_saved, language="markdown")
+
+            # --- LM Studio 直接呼び出しボタン ---
+            from services import lm_studio_models
+
+            chat_model = lm_studio_models.current_chat_model()
+            b_local, b_info = st.columns([2, 3])
+            with b_local:
+                run_local = st.button(
+                    f"🤖 LM Studio に直接送信 ({chat_model[:32]})",
+                    key=f"ai_local_btn_{label_map_key}",
+                    type="primary",
+                    use_container_width=True,
+                    help="ローカル LM Studio (エアギャップ維持) で即時実行し、結果を下の JSON 欄に自動投入します。",
+                )
+            with b_info:
+                st.caption(
+                    "👆 ワンクリックでローカル推論 → 結果 JSON を下の欄に自動投入。"
+                    "または右上のコピーボタンで外部 LLM にも流せます。"
+                )
+
+            if run_local:
+                _run_local_llm_for_labels(prompt_saved, label_map_key)
+
+        st.markdown("---")
+        st.markdown("**結果の取り込み (JSON)**")
+
+        json_input = st.text_area(
+            "LLMの出力JSONを貼り付け (LM Studio 送信時は自動投入):",
+            height=180,
+            key=f"ai_json_input_{label_map_key}",
+        )
+
+        if st.button("サジェストを適用", key=f"ai_apply_btn_{label_map_key}"):
+            _apply_label_suggestion(
+                json_input=json_input,
+                df_source=df_source,
+                cluster_col=cluster_col,
+                label_map_key=label_map_key,
+                widget_key_prefix=widget_key_prefix,
+            )
+
+
+def _run_local_llm_for_labels(prompt: str, label_map_key: str) -> None:
+    """LM Studio に prompt を送信し、結果 JSON を text_area に流し込む。"""
+    from services import llm
+
+    system_prompt = (
+        "あなたは特許クラスタ分析の専門家です。与えられた情報から各クラスタに "
+        "適切な日本語の技術ラベルを付与し、厳密な JSON (例: {\"0\": \"CNF 分散技術\", \"1\": \"...\"}) "
+        "だけを返してください。JSON 以外の文章や ```json ...``` のフェンスは付けないこと。"
+    )
+    try:
+        client = llm.create_client()
+    except Exception as e:  # noqa: BLE001
+        st.error(f"LM Studio クライアント生成失敗: {type(e).__name__}: {e}")
+        return
+
+    with st.spinner("🤖 LM Studio で推論中..."):
+        try:
+            response = client.generate_text(
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                max_retries=2,
+            )
+        except Exception as e:  # noqa: BLE001
+            st.error(f"LM Studio 推論失敗: {type(e).__name__}: {e}")
+            return
+
+    if not response:
+        st.warning("LM Studio から空の応答が返りました。")
+        return
+
+    # Markdown フェンスや思考タグ (<think>...</think>) を除去
+    cleaned = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
+    st.session_state[f"ai_json_input_{label_map_key}"] = cleaned
+    st.success(f"✅ LM Studio の応答を JSON 欄に投入しました ({len(cleaned)} 文字)。下の「サジェストを適用」を押してください。")
+    st.rerun()
+
+
+def render_local_ai_insight_button(prompt_text: str, unique_key: str) -> None:
+    """private モード用 AI Insight UI。
+
+    `utils_ai.render_ai_insight_button` の完全な差し替え。既存のプロンプト
+    コピー経路を残しつつ、「🤖 LM Studio で即時実行」ボタンを追加する。
+    結果は同じ expander 内にそのまま表示する (apply ボタンは不要)。
+
+    `apollo_bootstrap.init()` がこの関数を `utils_ai.render_ai_insight_button`
+    のモンキーパッチ先として登録する。
+    """
+    with st.expander("✨ AI Insight (プロンプト生成 + LM Studio 直接実行)", expanded=False):
+        st.caption(
+            "エアギャップ環境向け: 🤖 LM Studio に直接送信 で即時実行、または "
+            "プロンプトコピー経由で外部 LLM (ChatGPT/Claude 等) にも流せます。"
+        )
+        st.code(prompt_text, language="markdown")
+
+        # CAPCOM 出力フック (元実装と互換)
+        try:
+            import capcom
+
+            if capcom.is_active():
+                capcom.save_prompt(unique_key, prompt_text)
+                st.caption(f"📡 CAPCOM: `prompts/{unique_key}.md` に出力済み")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # --- LM Studio 直接実行 ---
+        from services import lm_studio_models
+
+        chat_model = lm_studio_models.current_chat_model()
+        if st.button(
+            f"🤖 LM Studio で実行 ({chat_model[:32]})",
+            key=f"ai_insight_local_btn_{unique_key}",
+            type="primary",
+        ):
+            _run_local_llm_for_insight(prompt_text, unique_key)
+
+        # 結果表示 (前回実行の結果が session_state にあれば表示)
+        result_key = f"ai_insight_result_{unique_key}"
+        if result_key in st.session_state:
+            st.markdown("---")
+            st.markdown("**🤖 LM Studio の回答**")
+            st.markdown(st.session_state[result_key])
+
+
+def _run_local_llm_for_insight(prompt: str, unique_key: str) -> None:
+    """LM Studio に prompt を送信し、結果を session_state に保存して rerun。"""
+    from services import llm
+
+    try:
+        client = llm.create_client()
+    except Exception as e:  # noqa: BLE001
+        st.error(f"LM Studio クライアント生成失敗: {type(e).__name__}: {e}")
+        return
+
+    with st.spinner("🤖 LM Studio で推論中..."):
+        try:
+            response = client.generate_text(
+                system_prompt="あなたは特許情報分析の専門家です。簡潔かつ洞察に富んだ分析を日本語で返してください。",
+                user_prompt=prompt,
+                max_retries=2,
+            )
+        except Exception as e:  # noqa: BLE001
+            st.error(f"LM Studio 推論失敗: {type(e).__name__}: {e}")
+            return
+
+    # 思考タグ除去 (qwen3 等 reasoning モデル対応)
+    cleaned = re.sub(r"<think>.*?</think>", "", response or "", flags=re.DOTALL).strip()
+    st.session_state[f"ai_insight_result_{unique_key}"] = cleaned or response
+    st.rerun()
+
+
+def _apply_label_suggestion(
+    json_input: str,
+    df_source,
+    cluster_col: str,
+    label_map_key: str,
+    widget_key_prefix: str | None,
+) -> None:
+    """utils.render_ai_label_assistant の apply ロジックを複製 (hosted 版と同一挙動)。"""
+    try:
+        cleaned_json = re.sub(r"^```json\s*|\s*```$", "", json_input.strip(), flags=re.MULTILINE)
+        data = json.loads(cleaned_json)
+
+        current_map = st.session_state[label_map_key]
+        count = 0
+        for cid_str, label in data.items():
+            try:
+                cid = int(cid_str)
+                unique_cids = df_source[cluster_col].unique()
+                if cid in current_map or cid in unique_cids:
+                    new_val = f"[{cid}] {label}"
+                    current_map[cid] = new_val
+                    if widget_key_prefix:
+                        w_key = f"{widget_key_prefix}_{cid}"
+                        if w_key in st.session_state:
+                            st.session_state[w_key] = new_val
+                    count += 1
+            except Exception:  # noqa: BLE001
+                pass
+
+        st.session_state[label_map_key] = current_map
+
+        # Saturn V / MEGA のラベルカラム連動更新 (hosted 版と同一)
+        if label_map_key == "saturnv_labels_map" and "df_main" in st.session_state:
+            st.session_state.df_main["cluster_label"] = st.session_state.df_main["cluster"].map(current_map)
+        elif label_map_key == "drill_labels_map" and "df_drilldown_result" in st.session_state:
+            st.session_state.df_drilldown_result["drill_cluster_label"] = (
+                st.session_state.df_drilldown_result["drill_cluster"].map(current_map)
+            )
+        elif label_map_key == "mega_drill_labels_map" and "df_drilldown" in st.session_state:
+            st.session_state.df_drilldown["label"] = st.session_state.df_drilldown["cluster_id"].map(current_map)
+            st.session_state.sbert_sub_cluster_map_auto = current_map
+
+        st.success(f"{count} 件のラベルを更新しました!")
+        st.rerun()
+    except Exception as e:  # noqa: BLE001
+        st.error(f"JSONパースエラー: {e}")
 
 
 def _render_cache_index_table() -> None:

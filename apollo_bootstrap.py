@@ -95,3 +95,25 @@ def init() -> None:
     except Exception:  # noqa: BLE001
         # utils の import 失敗は致命的ではないので握り潰す (hosted fallback に任せる)
         pass
+
+    # v7.0-private.2 Track H: AI サジェスト系 UI を LM Studio 直接呼び出し版に差替
+    # エアギャップ環境で「ChatGPT コピペ」フローが意味を成さないため、private では
+    # LM Studio 直送ボタン付き UI にモンキーパッチで置き換える。既存の外部 LLM
+    # コピペ経路も新 UI に残しているので柔軟性は失われない。
+    try:
+        import utils as _utils_for_ai
+
+        from services.private_ui import render_local_ai_label_assistant
+
+        _utils_for_ai.render_ai_label_assistant = render_local_ai_label_assistant
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        import utils_ai as _utils_ai_mod
+
+        from services.private_ui import render_local_ai_insight_button
+
+        _utils_ai_mod.render_ai_insight_button = render_local_ai_insight_button
+    except Exception:  # noqa: BLE001
+        pass
