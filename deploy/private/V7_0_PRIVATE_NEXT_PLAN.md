@@ -1,5 +1,38 @@
 # APOLLO v7.0-private.2 (上流 v7.0.0 派生) — プロジェクト階層 + レポート素材永続化 + Vision VOYAGER + ローカル AI サジェスト
 
+## 実装状況 (2026-04-16 完了)
+
+| Track | 内容 | 状態 | 主な成果物 |
+|---|---|---|---|
+| **A** | プロジェクト CRUD の基盤 | ✅ 実装済 | `services/projects.py` (create / list / get / set_active / delete) |
+| **F** | v7.0 → v7.0-private.2 自動マイグレーション | ✅ 実装済 | `services/migration_v7_0.py` (ハードリンク戦略、sentinel 管理) |
+| **C** | analysis_state / server_files / storage の path 解決を project 化 | ✅ 実装済 | `services/analysis_state.py` 他 (project-scoped path) |
+| **D** | モデル選択の project 化 | ✅ 実装済 | `services/lm_studio_models.py` (project config が最優先) |
+| **B** | capcom モンキーパッチでレポート素材を store にミラー | ✅ 実装済 | `services/project_hooks.py::install_all_hooks` (7 関数 wrap) |
+| **G** | プロジェクト UI (ダッシュボード + サイドバー selector) | ✅ 実装済 | `services/private_ui.py` (tab 化、新規/削除フォーム) |
+| **E** | Vision VOYAGER (Phase 1 analyst に multimodal 送信) | ✅ 実装済 | `services/llm.py` (`images=` 引数)、VOYAGER 7 行改修 |
+| **H** | AI サジェスト系 UI のローカル LM Studio 対応 | ✅ 実装済 | `private_ui.render_local_ai_label_assistant` / `..._insight_button` + モンキーパッチ |
+| **K** | LM Studio streaming + 進捗細粒度化 (90 分タイムアウト対策) | ✅ 実装済 | `LMStudioLLMClient._consume_stream` + VOYAGER モジュール毎 status |
+| **I** | Vision 専用モデル選択の分離 | ✅ 実装済 | `current_vision_model()` + config.json `vision_model` + サイドバー selectbox |
+| **J** | プロジェクト↔Mission Control の関係を明示化 | ✅ 実装済 | `render_project_banner()` (Home.py 3 行) + ダッシュボード重複排除 + サイドバー mini-stats |
+| **L** | CAPCOM セッション自動開始 + ディスク hydrate | ✅ 実装済 | `project_hooks.hydrate_from_disk` + render_sidebar_extras の auto-init |
+
+## V7 本体への変更総計
+
+**合計 ~15 行** (upstream 5000+ 行のうち 0.3% 未満):
+- `pages/8_📝_VOYAGER.py`: 9 行 (Track E の images 引数 7 行 + Track K のモジュール毎 status 2 行)
+- `Home.py`: 3 行 (Track J の render_project_banner 呼び出し)
+- `utils.py`: 3 行 (v7.0-private.1 baseline の認証ゲート)
+
+残りは全て `services/` + `apollo_bootstrap.py` + `apollo_config.py` のモンキーパッチで完結。
+
+## 配布
+
+- Docker Hub: `jl1nie/apollo-private:7.0.0-private.2` + `latest` (2026-04-16 push)
+- GitHub default branch: `apollo-private-v7` (`jl1nie/apollo-patent-analysis`)
+
+---
+
 ## 命名規約について
 
 **"v7.1" ではなく "v7.0-private.2"** と呼称する理由: "v7.1" は上流オリジナル作者 (しばやま氏) の
@@ -499,72 +532,37 @@ docker exec apollo-private-v7 ls -la /var/lib/apollo/projects/default/state/
 
 ## 7. 非対象 / 今後の拡張
 
-### 7.1 v7.0-private.3 候補 (実装確度高)
+### 7.1 v7.0-private.3 候補 (残タスク)
 
-- **Track K: LM Studio 長時間応答対策 (streaming + WebSocket 活性化)**
-  - 問題: private モードで VOYAGER レポート生成時、**90 分経過してから**
-    `Request timed out` エラー発生 (2026-04-16)。OpenAI SDK の既定 600s 総タイムアウトが
-    httpx 内で "read_timeout per chunk" 扱いでリセットされ続け、LM Studio が細切れに
-    トークンを送る限り SDK 側でキレない。最終的にブラウザ WebSocket idle / httpx pool /
-    LM Studio 側の上限で切断された可能性が高い
-  - 一時対策 (v7.0-private.2 で適用済み):
-    - `apollo_config.LM_STUDIO_TIMEOUT` 追加 (既定 1800s、env 可変)
-    - `apollo_config.LM_STUDIO_MAX_TOKENS` 追加 (既定 65536、Gemini と同等)
-    - `LMStudioLLMClient` で両方を明示指定
-  - 根本対策 (Track K で実装):
-    1. `services/llm.py::LMStudioLLMClient.generate_text` に `stream=True` モード追加
-       (Gemini 側も同等に streaming 対応)
-    2. VOYAGER Phase 1/2/3 で `st.empty()` + トークン毎に `st.markdown(accumulated)` で
-       逐次表示 → WebSocket に定期的な書き込みが発生 → ブラウザ idle 切断を防ぐ
-    3. タイムアウトが「無応答時間」ベースになる (各チャンク間の間隔のみ監視)
-    4. ユーザ視点の UX 改善: 進捗が見えるので長時間待機のストレスが減る、
-       途中で「止める」ボタンで中断可能
-  - 互換性: `generate_text(system, user, images=None) -> str` インタフェースは維持
-    (stream=True 時は内部で集約して戻す)。VOYAGER 側のコード改修不要
+Track I / J / K / L は v7.0-private.2 で全て実装済 (上記実装状況表を参照)。
+v7.0-private.3 で取り組む残タスク:
 
-- **Track J: プロジェクト↔Mission Control の関係を明示化 (UX 改善)**
-  - 問題: サイドバー左の「📂 プロジェクト selectbox」と、Mission Control 中央の
-    「📂 プロジェクト: XXX | 埋め込み: yyy」ダッシュボードヘッダが独立ウィジェット
-    に見え、プロジェクト切替が Mission Control 全体 (ファイルアップロード・前処理・
-    各分析モジュール) と紐付いていることが読み取れない (2026-04-16 ヒアリング)
-  - 採用案: **C = A + B の併用**
-    - **A. ダッシュボード側の重複解消** (V7 touch ゼロ):
-      - `services/private_ui.py::_render_project_dashboard` の expander ヘッダから
-        「プロジェクト名 + 埋め込みモデル」表示を削除
-      - 代わりに「📁 プロジェクトデータ (ファイル / Snapshot / CAPCOM / Reports)」
-        のように機能ラベルだけにする
-      - ヘッダ直下の caption 行 (作成日 / 最終更新 / 件数) は残す
-    - **B. Mission Control タイトル直下に banner** (V7 本体 `Home.py` 1 行追加):
-      - `st.title("🛰️ Mission Control")` の直後に
-        `services.private_ui.render_project_banner()` を呼ぶ (hosted モードでは no-op)
-      - banner 内容: 「📂 アクティブプロジェクト: **CNF 特許分析** | 🔒 埋め込み: `qwen3-4b` |
-        ⬅️ 切替はサイドバーから」 (1 行でコンパクト)
-      - V7 touch は 1 行 (Track E の 7 行改修と同じ分類の例外)
-    - **サイドバー selectbox 強化**:
-      - ラベルを「📂 アクティブプロジェクト (以下の全データと紐付け)」に
-      - selectbox 直下に mini-stats caption 「📄 特許: 3,200件 / 🧪 前処理: 2 種 / ⏱ 2h前」
-  - 期待効果: 初めて触るユーザが「サイドバー ↔ メイン」が同じプロジェクトを指している
-    ことを 1 秒で理解できる。既存ユーザの慣れた動線も壊さない
+- **Track M: CORE ページの AI 分類サジェストをローカル LLM 対応**
+  - 現状: `pages/2_💡_CORE.py:256` の「AIアシスタント用プロンプトを生成」UI は
+    ページ内インラインで、Track H の共通関数モンキーパッチではカバー外
+  - 狙い: プロンプト生成 → LM Studio 送信 → 結果 JSON 自動投入 の 1 クリック化
+  - 実装: ページ本体の改修が必要 (V7 touch 最小化との相克)。
+    代替案: CORE ページ末尾に hook 点を追加し、`private_ui` から注入
 
-- **Track I: Vision 専用モデル選択の分離**
-  - 現状: VOYAGER Phase 1 で `images=` ありの呼び出しは `current_chat_model()` が
-    返す「推論モデル」を使う。推論モデルに `qwen/qwen3-30b-a3b-2507` のような
-    text-only モデルを選んでいると multimodal 呼び出しが失敗 → テキスト fallback
-    に落ちる (`LMStudioLLMClient.generate_text` の except 節で実装済み)
-  - 狙い: 強力な text-only モデル (30B MoE 等) の text 生成品質を犠牲にせず、
-    画像送信時だけ vision 専用モデル (`qwen/qwen3-vl-8b` 等) に自動スイッチ
-  - 実装範囲:
-    1. `projects/<id>/config.json` に `vision_model` (optional) フィールド追加
-    2. `services/lm_studio_models.py` に `current_vision_model()` 追加
-       (解決順: session_state `apollo_vision_model_select` → project config →
-       モデル一覧から VL/vision/multimodal を含むモデル自動検出 → None)
-    3. サイドバーに「Vision モデル」selectbox 追加 (推論モデルとは別枠)
-    4. `services/llm.py` `_generate_multimodal` 内で vision_model を優先使用
-       (あれば切替、なければ chat_model のまま試して失敗したら fallback)
-  - 上流 v7 の状態: upstream は Gemini 2.5-flash のみ (multimodal 可) だが
-    VOYAGER コードが `module_images` を収集するだけで `generate_content` に
-    渡していないため、**実質 vision 非対応**。v7.0-private.2 Track E で初めて
-    vision 活性化したが、モデル選択が推論モデルと共通なのが課題
+- **Track N: VOYAGER 外部 LLM プロンプト タブのローカル対応**
+  - VOYAGER ページには「ローカル LLM 直接実行」とは別に「外部 LLM 用プロンプト
+    をコピー」タブが存在 (pages/8_📝_VOYAGER.py:553)。こちらも LM Studio で直接
+    実行できるとエアギャップ環境で完結
+
+- **Track O: 分析モジュール固有の session_state を disk に永続化**
+  - Track L では `st.session_state['snapshots']` と `capcom_store` のみ復元。
+    Saturn V のクラスタ結果 (`df_main['cluster']` 等) は preprocess state に
+    含まれているが、MEGA Pulse の `df_momentum_result` / CORE の
+    `core_classification_rules` / EAGLE の `df_eagle` 等、各モジュール固有の
+    session_state は保存されない
+  - 対策: `analysis_state.STATE_KEYS` に module-specific キーを追加し、
+    モジュール実行完了時に pkl に追記保存 → 復元時に戻す
+  - 優先度: 低 (多くは preprocess から再計算で復元可能)
+
+- **Track P: upstream マージテスト**
+  - shibayama 氏が v7.1 (or later) を出した際のマージ可搬性を実地検証
+  - `git fetch upstream && git merge upstream/main` で衝突箇所を見て、V7 本体
+    touch の 15 行を今より減らせる余地がないかレビュー
 
 ### 7.2 v7.2 以降 (アイデア段階)
 
