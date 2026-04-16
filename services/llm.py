@@ -110,12 +110,21 @@ class LMStudioLLMClient:
         from openai import OpenAI  # 遅延 import
         from services import lm_studio_models
 
+        # OpenAI SDK 既定の 600s では VOYAGER レポート生成 (30B モデルで 2K-3K 文字
+        # 生成) でタイムアウトすることがある。apollo_config の LM_STUDIO_TIMEOUT
+        # (env `LM_STUDIO_TIMEOUT`、既定 1800s) で上書きする。
         self._client = OpenAI(
             api_key=api_key or apollo_config.LM_STUDIO_API_KEY,
             base_url=apollo_config.LM_STUDIO_BASE_URL,
+            timeout=apollo_config.LM_STUDIO_TIMEOUT,
         )
         # 引数が明示されていなければサイドバー selectbox の最新値を参照する
         self.model_name = model_name or lm_studio_models.current_chat_model()
+
+    def _max_tokens_kwarg(self) -> dict:
+        """chat.completions.create の max_tokens 引数を dict で返す (0 以下なら空)。"""
+        n = apollo_config.LM_STUDIO_MAX_TOKENS
+        return {"max_tokens": n} if n and n > 0 else {}
 
     def generate_text(
         self,
@@ -158,6 +167,7 @@ class LMStudioLLMClient:
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.7,
+                    **self._max_tokens_kwarg(),
                 )
                 return resp.choices[0].message.content or ""
             except Exception as e:
@@ -205,6 +215,7 @@ class LMStudioLLMClient:
                         {"role": "user", "content": content},
                     ],
                     temperature=0.7,
+                    **self._max_tokens_kwarg(),
                 )
                 return resp.choices[0].message.content or ""
             except Exception as e:

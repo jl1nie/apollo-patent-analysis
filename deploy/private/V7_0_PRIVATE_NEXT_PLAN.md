@@ -501,6 +501,27 @@ docker exec apollo-private-v7 ls -la /var/lib/apollo/projects/default/state/
 
 ### 7.1 v7.0-private.3 候補 (実装確度高)
 
+- **Track K: LM Studio 長時間応答対策 (streaming + WebSocket 活性化)**
+  - 問題: private モードで VOYAGER レポート生成時、**90 分経過してから**
+    `Request timed out` エラー発生 (2026-04-16)。OpenAI SDK の既定 600s 総タイムアウトが
+    httpx 内で "read_timeout per chunk" 扱いでリセットされ続け、LM Studio が細切れに
+    トークンを送る限り SDK 側でキレない。最終的にブラウザ WebSocket idle / httpx pool /
+    LM Studio 側の上限で切断された可能性が高い
+  - 一時対策 (v7.0-private.2 で適用済み):
+    - `apollo_config.LM_STUDIO_TIMEOUT` 追加 (既定 1800s、env 可変)
+    - `apollo_config.LM_STUDIO_MAX_TOKENS` 追加 (既定 65536、Gemini と同等)
+    - `LMStudioLLMClient` で両方を明示指定
+  - 根本対策 (Track K で実装):
+    1. `services/llm.py::LMStudioLLMClient.generate_text` に `stream=True` モード追加
+       (Gemini 側も同等に streaming 対応)
+    2. VOYAGER Phase 1/2/3 で `st.empty()` + トークン毎に `st.markdown(accumulated)` で
+       逐次表示 → WebSocket に定期的な書き込みが発生 → ブラウザ idle 切断を防ぐ
+    3. タイムアウトが「無応答時間」ベースになる (各チャンク間の間隔のみ監視)
+    4. ユーザ視点の UX 改善: 進捗が見えるので長時間待機のストレスが減る、
+       途中で「止める」ボタンで中断可能
+  - 互換性: `generate_text(system, user, images=None) -> str` インタフェースは維持
+    (stream=True 時は内部で集約して戻す)。VOYAGER 側のコード改修不要
+
 - **Track J: プロジェクト↔Mission Control の関係を明示化 (UX 改善)**
   - 問題: サイドバー左の「📂 プロジェクト selectbox」と、Mission Control 中央の
     「📂 プロジェクト: XXX | 埋め込み: yyy」ダッシュボードヘッダが独立ウィジェット

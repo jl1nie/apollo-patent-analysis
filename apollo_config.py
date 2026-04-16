@@ -30,6 +30,14 @@ LM_STUDIO_BASE_URL: str = os.environ.get(
     "LM_STUDIO_BASE_URL", "http://host.docker.internal:1234/v1"
 )
 LM_STUDIO_API_KEY: str = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
+# 長文生成用のタイムアウト (秒)。30B クラスのモデルで VOYAGER レポート生成は
+# 数分〜10 分超かかることがあるため OpenAI SDK の既定 600s では不十分。
+LM_STUDIO_TIMEOUT: float = float(os.environ.get("LM_STUDIO_TIMEOUT", "1800"))
+# chat.completions.create の max_tokens 既定値。
+# VOYAGER 戦略レポート (Phase 3 strategist) は 20K+ トークンに達することがあり、
+# 上流 v7 の Gemini 呼び出しは max_output_tokens=65536 を使っている。同等に合わせる。
+# 0 以下で送信省略 (モデル側の既定値に委ねる)。
+LM_STUDIO_MAX_TOKENS: int = int(os.environ.get("LM_STUDIO_MAX_TOKENS", "65536"))
 
 EMBEDDING_MODEL: str = os.environ.get(
     "APOLLO_EMBEDDING_MODEL", "text-embedding-qwen3-embedding-4b"
