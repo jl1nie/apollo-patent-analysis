@@ -1199,6 +1199,34 @@ def _render_model_selector() -> None:
     else:
         st.caption("推論モデルが見つかりません")
 
+    # Reasoning モデル (Track M: VL 分業アーキテクチャ)
+    # Phase 0.5 で VL が視覚記述を JSON 化した後、Phase 1/2/3 で使う text-only 推論モデル。
+    # 80B のような強力なテキスト推論モデルをここで指定する (VL とは別スロット)。
+    # 未指定 = chat モデルと同じという扱い (従来挙動)。
+    if chat_ids and apollo_config.USE_VISION_DESCRIPTOR:
+        reasoning_opts = ["(chat モデルと同じ)"] + chat_ids
+        default_reasoning = lm_studio_models.current_reasoning_model()
+        try:
+            # chat_model と同じなら "(chat モデルと同じ)" を既定に
+            if default_reasoning == lm_studio_models.current_chat_model():
+                default_idx_r = 0
+            else:
+                default_idx_r = reasoning_opts.index(default_reasoning)
+        except ValueError:
+            default_idx_r = 0
+        picked_r = st.selectbox(
+            "🧠 Reasoning モデル (VL 分業時の Phase 1-3)",
+            reasoning_opts,
+            index=default_idx_r,
+            key="_reasoning_model_picker",
+            help="Phase 0.5 (VL) で snapshot を構造化した後、Phase 1-3 のテキスト推論で使うモデル。"
+            "80B クラスの強力なテキスト推論モデルを指定すると戦略レポートの質が上がる。"
+            "未指定なら chat モデルと同じ挙動。",
+        )
+        st.session_state["apollo_reasoning_model_select"] = (
+            "" if picked_r == reasoning_opts[0] else picked_r
+        )
+
     # Vision モデル (VOYAGER 画像送信時、Track I)
     if chat_ids:
         vision_opts = ["(未指定 - chat モデルで試行)"] + chat_ids

@@ -568,8 +568,25 @@ if 'voyager_prompt_preview_data' in st.session_state:
 import apollo_config as _apollo_config
 st.markdown("---")
 if _apollo_config.IS_PRIVATE:
-    st.markdown(f"### 🤖 VOYAGER レポート生成 (Local LLM: {_apollo_config.CHAT_MODEL})")
-    st.markdown(f"収集したエビデンスから LM Studio のローカル LLM (`{_apollo_config.CHAT_MODEL}`) でレポートの骨格を自動生成します。")
+    # サイドバー selectbox / project config / env override を反映した現在値を表示
+    from services import lm_studio_models as _lms_label
+    _reasoning_label = _lms_label.current_reasoning_model()
+    _vision_label = _lms_label.current_vision_model() if _apollo_config.USE_VISION_DESCRIPTOR else None
+    if _apollo_config.USE_VISION_DESCRIPTOR and _vision_label:
+        st.markdown(
+            f"### 🤖 VOYAGER レポート生成 "
+            f"(Vision: `{_vision_label}` / Reasoning: `{_reasoning_label}`)"
+        )
+        st.markdown(
+            f"Phase 0.5 で VL モデル (`{_vision_label}`) が snapshot を構造化し、"
+            f"Phase 1-3 で推論モデル (`{_reasoning_label}`) が戦略レポートを生成します。"
+        )
+    else:
+        st.markdown(f"### 🤖 VOYAGER レポート生成 (Local LLM: `{_reasoning_label}`)")
+        st.markdown(
+            f"収集したエビデンスから LM Studio のローカル LLM (`{_reasoning_label}`) で"
+            "レポートの骨格を自動生成します。"
+        )
     gemini_key = ""  # private モードでは未使用 (factory が無視する)
     col_gem2, = st.columns(1)
 else:
@@ -714,8 +731,6 @@ if st.button("📝 レポート生成", type="primary", key="voyager_generate_re
         # =============================================
         # Phase 1: Analyst（モジュール別深掘り分析）
         # =============================================
-        status.markdown("🔄 **Phase 1/3: モジュール別深掘り分析中...**")
-
         module_groups = {}
         for snap_idx, snap in enumerate(snapshots):
             mod = snap.get('module', 'Unknown')
@@ -723,12 +738,54 @@ if st.button("📝 レポート生成", type="primary", key="voyager_generate_re
                 module_groups[mod] = []
             module_groups[mod].append((snap_idx + 1, snap))  # 1-based index
 
-        analyst_results = {}
         _mod_total = len(module_groups)
+
+        # =============================================
+        # Phase 0.5: Visual Descriptor (Track M)
+        # VL-8B が snapshot PNG を構造化 JSON に焼き付け、Phase 1/2/3 は text-only 推論に専念する。
+        # USE_VISION_DESCRIPTOR=false のときは従来の multimodal 単段経路にフォールバック。
+        # =============================================
+        use_vd = _apollo_config.USE_VISION_DESCRIPTOR and _apollo_config.IS_PRIVATE
+        module_visual_records = {}
+        if use_vd:
+            status.markdown("🔄 **Phase 0.5/3: 画像の構造化記述中 (VL)...**")
+            try:
+                from services import vision_descriptor as _vd
+                from services import lm_studio_models as _lms
+                # Phase 1-3 は Reasoning モデルに切替 (Phase 0.5 の VL 呼出は model= で上書き)
+                _reasoning_model = _lms.current_reasoning_model()
+                if hasattr(client, "model_name") and _reasoning_model:
+                    client.model_name = _reasoning_model
+                for idx, (mod, snaps_group) in enumerate(module_groups.items()):
+                    status.markdown(
+                        f"🔄 **Phase 0.5/3: {mod} 視覚記述中 "
+                        f"({idx + 1}/{_mod_total})...**"
+                    )
+                    module_visual_records[mod] = _vd.describe_module(
+                        mod, snaps_group, client
+                    )
+            except Exception as _vd_exc:  # noqa: BLE001
+                st.warning(
+                    f"⚠️ Phase 0.5 (視覚記述) が失敗しました: "
+                    f"{type(_vd_exc).__name__}: {_vd_exc}. "
+                    f"従来の multimodal 経路にフォールバックします。"
+                )
+                use_vd = False
+                module_visual_records = {}
+
+        status.markdown("🔄 **Phase 1/3: モジュール別深掘り分析中...**")
+        analyst_results = {}
         for idx, (mod, snaps_group) in enumerate(module_groups.items()):
             progress.progress((idx + 1) / (_mod_total + 2))
             # v7.0-private.2 Track K: モジュール単位の細粒度ステータス
             status.markdown(f"🔄 **Phase 1/3: {mod} モジュール分析中 ({idx + 1}/{_mod_total})...**")
+
+            # Track M: 視覚記録を evidence_text に差し込むためのヘルパ
+            _vd_records_by_eid = {}
+            if use_vd and mod in module_visual_records:
+                _vd_records_by_eid = {
+                    r.evidence_id: r for r in module_visual_records[mod]
+                }
 
             evidence_text = ""
             for eid, s in snaps_group:
@@ -737,9 +794,43 @@ if st.button("📝 レポート生成", type="primary", key="voyager_generate_re
                 data = s.get('data_summary', '')
                 if isinstance(data, dict):
                     data = json.dumps(data, ensure_ascii=False, indent=2, default=str)[:10000]
-                evidence_text += f"\n[[Evidence {eid}]] {title}\n説明: {desc}\nデータ:\n{str(data)[:5000]}\n"
+                evidence_text += f"\n[[Evidence {eid}]] {title}\n説明: {desc}\n"
+                _rec = _vd_records_by_eid.get(eid)
+                if _rec is not None:
+                    from services import vision_descriptor as _vd_fmt
+                    evidence_text += _vd_fmt.format_record_for_prompt(_rec) + "\n"
+                evidence_text += f"データ:\n{str(data)[:5000]}\n"
 
             guide = MODULE_ANALYSIS_GUIDE.get(mod, "提供されたエビデンスを詳細に分析してください。")
+
+            _vd_activation_block = ""
+            if use_vd:
+                _vd_activation_block = """
+
+## 視覚記録の活用
+evidence_text 内の各 Evidence には「### 視覚記録 [[Evidence X]]」ブロックが含まれている。
+これは VL モデル (Vision-Language) が画像から抽出した**視覚的事実**であり、data_summary に
+記載される**数値的事実**とは独立した情報源である。以下の定性的事実は、Layer 1 (事実) の
+記述の一部として**本文に自然に織り込む**こと (「視覚記録によれば」「視覚的には」のような
+節マーカー的前置きは不要、散文の一要素として統合する):
+- 象限ポジション (右上 / 左下 / 中央等)
+- 空間的近接・隣接関係
+- 孤立・外れ値の分布
+- 時系列曲線の形状 (S 字 / プラトー / 変曲点)
+- ネットワーク中心性 (ハブ・ブリッジ)
+- ワードクラウドの視覚的階層 (支配的語彙)
+
+### 散文化の例
+- ○ 良い例: 「クラスタ [13] 環境親和性 CNF 複合体は右上象限に位置し、累積 20 件ながら
+  CAGR 31.95% と急成長を示す [[Evidence 5]]」— 視覚要素 (象限) が文中に溶け込んでいる
+- × 悪い例: 「**視覚記録によれば**、クラスタ [13] は右上象限に位置。**事実として**、CAGR
+  は 31.95%」— 節マーカー化された機械的書き方
+
+## 数値の扱いに関する注意
+視覚記録には**数値は一切含まれない**（VL が意図的に数値を書かない設計）。
+CAGR 値・件数・パーセンテージ等の**全ての数値は必ず data_summary / CAPCOM データから引用**
+すること。視覚記録から推測で数値を書いてはならない。
+"""
 
             analyst_system = f"""あなたは特許情報分析の専門家（{mod}モジュール担当）です。
 
@@ -748,13 +839,14 @@ Layer 1 — 事実 (Fact): データから直接読み取れる数値・集計�
 Layer 2 — 解釈 (Interpretation): 事実に対する技術的・市場的な意味づけ。「〜を示唆する」「〜と解釈できる」。
 Layer 3 — 洞察 (Insight): 複数の事実・解釈を組み合わせた高次の知見。「〜にもかかわらず」「〜と合わせて考えると」。
 Layer 4 — 提言 (Recommendation): 洞察に基づく具体的アクション提案。「〜を検討すべき」「〜への参入を推奨」。
-
+{_vd_activation_block}
 ## 出力ルール
-- 各段落がどの層に該当するか、読者が区別できるよう記述する
+- 4 層の視点を本文に織り込む。「**事実として**」「**解釈として**」「**洞察として**」「**提言として**」等の**節マーカーは使わない**（文意で層が読者に伝わる散文で書く）
 - 必ず [[Evidence X]] 形式でエビデンスを引用する（本文中に自然に埋め込む）
 - 具体的な特許タイトル・出願人名・数値を含める
 - **全てのエビデンス（チャート・マップ）を必ず [[Evidence X]] で引用すること**。引用されないエビデンスがあってはならない
-- 2,000〜3,000文字程度で記述する"""
+- 2,000〜3,000文字程度で記述する
+- 箇条書きは要点整理の場合のみ使用し、分析本体は段落で記述する (戦略ペーパーとしての格調を保つ)"""
 
             # CAPCOMデータから該当モジュールのJSONデータを抽出
             mod_data_section = ""
@@ -793,18 +885,24 @@ Layer 4 — 提言 (Recommendation): 洞察に基づく具体的アクション�
 上記のエビデンスとCAPCOMデータに基づき、{mod}モジュールの分析結果を4層モデルで詳細に記述してください。
 CAPCOMデータにクラスタ動態マップ（cluster_dynamics）、ノイズ分析（noise_analysis）、多様性指標（entropy/gini）、学術クラスタ（nebula_academic_clusters）、空間配置（spatial_context）等がある場合は必ず言及すること。"""
 
-            # v7.1: このモジュールの全 snapshot 画像を集めて multimodal で送る
-            module_images = []
-            for _eid, _s in snaps_group:
-                if _s.get('images'):
-                    module_images.extend(_s['images'])
-                elif _s.get('image'):
-                    module_images.append(_s['image'])
+            # Track M: USE_VISION_DESCRIPTOR=true の場合は Phase 0.5 で視覚記録を
+            # evidence_text に焼き付け済みなので、画像は送らず text-only で推論する。
+            # false の場合は従来通り multimodal (VL が直接推論する旧経路)。
+            if use_vd:
+                module_images = None
+            else:
+                module_images = []
+                for _eid, _s in snaps_group:
+                    if _s.get('images'):
+                        module_images.extend(_s['images'])
+                    elif _s.get('image'):
+                        module_images.append(_s['image'])
+                module_images = module_images if module_images else None
 
             result = client.generate_text(
                 system_prompt=analyst_system,
                 user_prompt=analyst_prompt,
-                images=module_images if module_images else None,
+                images=module_images,
             )
             analyst_results[mod] = result
 
@@ -950,13 +1048,13 @@ Mission Objectiveに対する直接回答。
         strategist_system = f"""あなたは特許情報分析のシニアストラテジストです。経営層・知財戦略部門向けの本格的な戦略レポートを執筆してください。
 
 ## 品質基準
-1. **4層分析の遵守**: 事実(数値)→解釈(意味)→洞察(統合知見)→提言(アクション)を各セクションで明示
-2. **定量的裏付け**: 全ての主張に具体的数値を付記（「128件（全体の23.4%）」のような形式）
+1. **4層分析の視点**: 事実(数値) / 解釈(意味) / 洞察(統合知見) / 提言(アクション) の視点を各章の論述に織り込む。ただし「**事実として**」「**解釈として**」「**洞察として**」「**提言として**」等の**節マーカーは使わない** — 散文で書き、文意で層が読者に伝わる書き方を優先する
+2. **定量的裏付け (範囲限定)**: Layer 1 (事実) および Layer 2 (解釈) の主張には Evidence / data_summary / CAPCOM データ由来の具体的数値を付記（「128件（全体の23.4%）」のような形式）。ただし **Layer 4 (提言) で数値を書く場合は、必ず Evidence に明示された値のみを引用し、出典 ([[Evidence X]]) を伴う**。未来予測的な数値 (年限付き出願件数目標・商業化時期・売上予測・KPI 等) は Evidence に根拠が無いため禁止
 3. **Evidence引用**: 必ず [[Evidence X]] 形式で本文中に自然に引用する（段落末に添える）
-4. **具体性**: 出願人名・特許タイトル・キーワード・IPC分類を具体的に記載
+4. **具体性**: 出願人名・特許タイトル・キーワード・IPC分類を具体的に記載 (ただし Evidence / data_summary に登場するもののみ — 架空の固有名詞は禁止)
 5. **レポートはMarkdown形式**: # でH1（章）、## でH2（節）、### でH3（小節）
 6. **各章は最低500文字以上**: 薄い記述は不可。深掘りした分析を求める
-7. **数値は件数と割合の両方**: 「152件」ではなく「152件（全体の23.4%）」
+7. **数値は件数と割合の両方**: 「152件」ではなく「152件（全体の23.4%）」(ただし Evidence 由来の値のみ)
 
 ## チャート・マップの必須掲載ルール
 - **全ての章（# 見出し）に最低1つの [[Evidence X]] 引用を含めること**。チャートやマップが無い章は不完全とみなす
@@ -974,7 +1072,58 @@ Mission Objectiveに対する直接回答。
 - Layer 1（事実列挙）だけで終わるセクションは不可
 - 根拠なき推測や一般論は不可
 - Evidence引用なしの段落が3段落以上続くのは不可
-- **チャート/マップへの言及がない章は不可**（全章に視覚的根拠を含めること）"""
+- **チャート/マップへの言及がない章は不可**（全章に視覚的根拠を含めること）
+- **「事実として」「解釈として」「洞察として」「提言として」の節マーカー化は禁止** (散文で書く)
+- **Evidence に根拠のない未来予測的数値は絶対に禁止**:
+  - 年限付き出願件数目標 (「2026年までに 2 件の特許出願」等)
+  - 商業化時期の断定 (「2027年までに商業化」等)
+  - 未来の登録数・市場規模・売上目標等の予測値
+  - 架空の KPI・ROI 数値
+  → これらは Evidence データに存在しないため書いてはならない。提言は「現状分析から
+    導かれる行動方向」のみ記述し、具体的な数値目標設定は読者 (経営層) の裁量に委ねる
+- **架空の固有名詞・イベント・規格名も禁止** (実在しない規格番号、実在しない共同事業名、
+  実在しない企業提携の断定等)。固有名詞は Evidence / data_summary / CAPCOM データに
+  登場するもののみ引用可
+
+## 章ごとの役割差別化 (厳守)
+「機会とリスク」章と「推奨アクション」章は**本質的に役割が異なる**。両章の内容が
+重複する (同じ事実・同じ提言を 2 回書く) のは品質不合格。
+
+### 「機会とリスク」章の役割
+- 機会 (upside) を 2-3 件、リスク (downside) を 2-3 件、それぞれ小見出し (### レベル)
+  を切って列挙する
+- 各項目は「なぜ機会か / なぜリスクか」を原因・背景・影響の軸で 3-5 行説明する
+- **具体的なアクション提案は書かない** (アクションは次章「推奨アクション」が担当)
+- 機会とリスクは対立構造として提示 (「〜は機会である一方、〜が同時にリスク」)
+
+### 「推奨アクション」章の役割
+- 具体的な行動計画を番号付きリスト 4-5 件で記述
+- 各項目は以下の 4 要素を含む:
+  - **誰が**: 社内の責任部門 (例: 知財戦略部門、技術開発部門、新規事業開発チーム)
+  - **何を**: 具体的な行動対象 (例: ○○クラスタの特許出願、○○との共同研究)
+  - **どうやって**: 実行手段・アプローチ (例: 学術機関との連携、既存特許の棚卸し)
+  - **根拠となる Evidence**: この提言を正当化する Evidence ID と、そこから読み取れる
+    事実・現状分析 (例: 「[[Evidence 5]] のクラスタ [13] は CAGR 31.95% かつ大手未参入」)
+- **年限付き数値目標・未来予測的数値は書かない** (「2026 年までに 2 件」「2027 年までに
+  商業化」等は Evidence に根拠が無く禁止。もし「期待成果」を書きたければ、Evidence に
+  既存の数値を引用した**質的変化**として表現する:
+  - ○ 許可: 「CAGR 31.95% (Evidence 5) の高成長領域で先行出願ポジションを確立」
+  - ○ 許可: 「現状ノイズ率 19.64% (Evidence 5) の領域を、特許化パイプラインに転換」
+  - × 禁止: 「2026 年までに 2 件の特許出願」「2027 年までに 1 件の商業化」
+  - × 禁止: 「市場規模 64 億ドル獲得」(Evidence に明示された将来予測値のみ引用可))
+- 前章「機会とリスク」で既出のファクトの羅列を繰り返さない
+- 機会を捉える / リスクを回避する、の**行動に落とし込む新しい切り口**で述べる
+- 箇条書き項目内で 4 層 (事実/解釈/洞察/提言) を機械的に反復しない — action 文体で
+  短く鋭く書く
+
+## 語彙と概念化の多様性
+- 同一の概念キーフレーズ (例: 「再発見」「再定義」「成熟の終わり」「二重構造」等) を
+  全章合計で **3 回以上は使用しない**。3 回目以降は類義の別表現に切り替える
+- 各章で**異なる概念ラベル**を提示することを推奨 (例: ある章では「寡占的分散」、
+  別章では「ホワイトスペースの三重交差」のように)
+- 戦略レポートとして経営層・知財戦略部門を唸らせる格調高い日本語を優先する。
+  固有の概念化フレーズ (例: 「水平分業型エコシステム」「学術の壁」「製造→成形→製品の
+  パイプライン」等) を積極的に創出する"""
 
         # Evidence ID 対応表 (Phase 3 で文脈と無関係な Evidence 引用が起きないよう必ず渡す)
         evidence_catalog_lines = []

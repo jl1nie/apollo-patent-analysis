@@ -423,6 +423,90 @@ class LMStudioLLMClient:
             raise last_err
         return ""
 
+    # ------------------------------------------------------------------
+    # Track M: 構造化 JSON 生成 (VL 視覚記述の Phase 0.5 で使用)
+    # ------------------------------------------------------------------
+    def generate_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        images: list[bytes] | None = None,
+        model: str | None = None,
+        max_retries: int = 2,
+        temperature: float = 0.3,
+    ) -> dict:
+        """JSON オブジェクトを生成する (response_format=json_object)。
+
+        ストリーミングは使わない (途中で切れた JSON は parse 不能になるため)。
+        画像を与えた場合は OpenAI 互換 multimodal content block を構築する。
+        `model` を指定すれば per-call でモデルを差し替えられる (Phase 0.5 の
+        VL 専用呼出で chat_model を一時上書きするため)。
+        """
+        import base64
+        import json as _json
+
+        effective_model = model or self.model_name
+
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        if images:
+            content: list[dict] = [{"type": "text", "text": user_prompt}]
+            for png in images:
+                b64 = base64.b64encode(png).decode("ascii")
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    }
+                )
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": user_prompt})
+
+        _llm_debug_log(
+            "generate_json.start",
+            model=effective_model,
+            prompt_chars=len(system_prompt) + len(user_prompt),
+            image_count=len(images) if images else 0,
+        )
+        last_err: Exception | None = None
+        call_start = time.time()
+        for attempt in range(max_retries):
+            attempt_start = time.time()
+            try:
+                resp = self._client.chat.completions.create(
+                    model=effective_model,
+                    messages=messages,
+                    temperature=temperature,
+                    response_format={"type": "json_object"},
+                    stream=False,
+                    **self._max_tokens_kwarg(),
+                )
+                text = resp.choices[0].message.content or ""
+                data = _json.loads(text)
+                _llm_debug_log(
+                    "generate_json.success",
+                    attempt=attempt,
+                    elapsed=round(time.time() - call_start, 2),
+                    result_chars=len(text),
+                )
+                return data
+            except Exception as e:
+                last_err = e
+                _llm_debug_log(
+                    "generate_json.exception",
+                    attempt=attempt,
+                    elapsed_attempt=round(time.time() - attempt_start, 2),
+                    exc_chain=_describe_exception(e),
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    continue
+                raise
+        if last_err:
+            raise last_err
+        return {}
+
 
 def create_client(api_key: str | None = None, model_name: str | None = None):
     """モードに応じた LLM クライアントを返す。

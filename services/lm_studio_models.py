@@ -235,6 +235,32 @@ def current_vision_model() -> str | None:
     return None
 
 
+def current_reasoning_model() -> str:
+    """Reasoning モデル ID を解決する (Track M: VL 分業アーキテクチャ)。
+
+    VOYAGER Phase 1/2/3 の text-only 推論で使うモデル。Phase 0.5 の視覚記述
+    (VL-8B) と役割を分離し、ここには 80B のような text 推論強モデルを置ける。
+
+    優先順位:
+      1. session_state["apollo_reasoning_model_select"]
+      2. アクティブプロジェクトの config.reasoning_model
+      3. apollo_config.REASONING_MODEL (env, 既定値 "" のときはスキップ)
+      4. current_chat_model() にフォールバック (既存 chat_model と同じ挙動)
+
+    ユーザーが「reasoning は chat と同じで良い」場合、env と session_state を
+    無指定にしておけば 4 で chat_model と同じ値が返り、現行挙動が維持される。
+    """
+    override = _session_override("apollo_reasoning_model_select")
+    if override:
+        return override
+    pmodel = _project_config_model("reasoning_model")
+    if pmodel:
+        return pmodel
+    if apollo_config.REASONING_MODEL:
+        return apollo_config.REASONING_MODEL
+    return current_chat_model()
+
+
 def current_chat_model() -> str:
     """推論モデル ID を解決する。VOYAGER レポート生成で使う。
 

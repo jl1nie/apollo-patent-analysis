@@ -52,6 +52,26 @@ EMBEDDING_MODEL: str = os.environ.get(
 )
 CHAT_MODEL: str = os.environ.get("APOLLO_CHAT_MODEL", "qwen/qwen3-30b-a3b-2507")
 
+# Track M (VL 分業アーキテクチャ):
+# VOYAGER を「Phase 0.5 = VL-8B が snapshot を構造化 JSON 記述 → Phase 1/2/3 は
+# text-only reasoning」の 2 段パイプラインに切り替える。従来の multimodal 単段
+# (VL が推論まで担当) では VL のモデル規模が推論品質を律速していたが、視覚と
+# 推論を分業することで 80B 級の text モデルの推論力を活用できる。
+USE_VISION_DESCRIPTOR: bool = os.environ.get(
+    "APOLLO_USE_VISION_DESCRIPTOR", "true" if IS_PRIVATE else "false"
+).lower() in ("1", "true", "yes", "on")
+
+# 視覚記述 (Phase 0.5) 専用モデル。未指定なら lm_studio_models.current_vision_model()
+# による自動検出にフォールバック (VL / Gemma-3/4 を id マッチで拾う)。
+VISION_DESCRIPTOR_MODEL: str = os.environ.get(
+    "APOLLO_VISION_DESCRIPTOR_MODEL", ""
+)
+
+# Reasoning (Phase 1/2/3) 専用モデル。未指定なら CHAT_MODEL と同じ扱い。
+# 80B のような text-only 強モデルをここで指定し、chat_model を軽量モデル
+# (VL 代替の fallback) に分離したい場合に使う。
+REASONING_MODEL: str = os.environ.get("APOLLO_REASONING_MODEL", "")
+
 
 def _embedder_label() -> str:
     """UI 表示用の埋め込みモデル略称。
