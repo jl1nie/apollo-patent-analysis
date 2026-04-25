@@ -21,6 +21,67 @@ license: mit
 
 ---
 
+## 📂 このフォークについて / About this fork
+
+このリポジトリ (`jl1nie/apollo-patent-analysis`) は [shibayamalicht/apollo-patent-analysis](https://github.com/shibayamalicht/apollo-patent-analysis) (上流オリジナル、以下「本家」) の**派生版**です。**default branch は `apollo-private-v7`** で、エアギャップ環境向けの Private Edition が入っています。
+
+This fork (`jl1nie/apollo-patent-analysis`) is a derivative of [shibayamalicht/apollo-patent-analysis](https://github.com/shibayamalicht/apollo-patent-analysis) (upstream original). The **default branch is `apollo-private-v7`** which ships the airgap-ready Private Edition.
+
+| ブランチ / Branch | 用途 / Purpose |
+|---|---|
+| **`apollo-private-v7`** (default) | 🔒 **Private Edition v7.0-private.2** — LM Studio 連携・認証・Docker・プロジェクト階層・Vision VOYAGER 等 |
+| `main` | ☁️ **本家ミラー** (Hosted Edition) — Hugging Face Spaces / Gemini API 前提、上流最新を追随 |
+| `apollo-private` | 🧊 v6 系 Private アーカイブ (参考・維持用) |
+
+上流の最新を取りたい時は `git checkout main` で切替。派生固有の変更はすべて `apollo-private-v7` に隔離しているため、本家とのコンフリクトは最小限。
+
+---
+
+## 🔒 Private Edition v7.0-private.2 — エアギャップ完全対応
+
+特許データを外部 LLM に送れない企業 IP 部門向けの配布形態です。Hugging Face Spaces 版 (Gemini API + SBERT) と同じ 10 モジュールを **すべてローカル LLM (LM Studio) で完動** させます。
+
+The Private Edition targets enterprise IP teams that cannot send patent data to external LLMs. All 10 modules from the Hugging Face Spaces version run **entirely on a local LLM (LM Studio)**.
+
+### 主な特徴 / Key Features
+
+- 🔒 **完全エアギャップ** — 埋め込み (Qwen3-Embedding-4B) + 推論 (Qwen3-30B-A3B 等) + Vision (Qwen3-VL-8B) すべてローカル、外部 API 不要
+- 📂 **プロジェクト階層** — CNF・バッテリー・半導体…ドメイン単位でベクトル空間を分離、UMAP/クラスタ比較を構造的に正しく保つ
+- 🤖 **ローカル AI サジェスト** — 各モジュールの AI Insight / ラベルサジェストが LM Studio を直接呼び出し (ChatGPT コピペ不要)
+- 🖼️ **Vision VOYAGER** — snapshot PNG を LLM に送信して視覚的構造 (外れ値位置・密度偏り) をレポートに反映
+- 💾 **全分析成果物を自動永続化** — snapshot / CAPCOM データ / プロンプト / レポートがプロジェクト配下に自動保存、再起動後も自動復元
+- 🔁 **Streaming 進捗** — 長文レポート生成中の文字数・速度・末尾プレビューをリアルタイム表示
+- 🔑 **認証付き** — `streamlit-authenticator` によるパスワード保護 (共有 PC 対応)
+- 🐳 **Docker 配布** — `jl1nie/apollo-private:latest` を pull して Docker Desktop から 3 クリック起動
+
+### クイックスタート (Docker Desktop)
+
+```bash
+# 最短: Docker Desktop の Images から jl1nie/apollo-private を Pull → Run
+# もしくは CLI:
+docker pull jl1nie/apollo-private:latest
+docker run -d -p 8501:8501 \
+  -v apollo-private-data:/var/lib/apollo \
+  -e APOLLO_ADMIN_PASSWORD=changeme \
+  --add-host host.docker.internal:host-gateway \
+  jl1nie/apollo-private:latest
+# ブラウザで http://localhost:8501 → admin/changeme でログイン
+```
+
+詳細は **[`deploy/private/README.md`](deploy/private/README.md)** を参照 (Docker Desktop GUI 中心の手順書、LM Studio セットアップ含む)。
+
+For detailed setup instructions (GUI-focused, including LM Studio configuration), see **[`deploy/private/README.md`](deploy/private/README.md)**.
+
+### 上流版との関係 / Relation to Upstream
+
+- 上流本体 (`Home.py`, `pages/*.py`, `utils.py`, `patiroha`) への変更は合計 **約 15 行** (VOYAGER 9 行 + Home.py 3 行 + utils.py 3 行)
+- 残りの機能追加はすべて `services/` + `apollo_bootstrap.py` のモンキーパッチで完結 → 上流更新のマージコンフリクトを最小化
+- `APOLLO_MODE=hosted` 環境変数で hosted (本家) モードに切替可能、Private 機能は完全に無効化される
+
+The upstream codebase is touched in only ~15 lines total; all other additions live in `services/` and `apollo_bootstrap.py` as monkey-patches. Setting `APOLLO_MODE=hosted` disables all Private features and reverts to the upstream behavior.
+
+---
+
 ## これは何？ / What is this?
 
 **APOLLO v8** は、APOLLO v7 をベースに**マルチエージェント CAPCOM**（Claude Code / Codex CLI / Antigravity IDE）と**母集団設計の文書化機能**を統合した版です。10モジュールで特許データを多角的に分析し、**CAPCOM** が結果を選択した AI エージェントに橋渡しし、**品質ゲート + 用語統一ルール付きの戦略レポート**を執筆します。

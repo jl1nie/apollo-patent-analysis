@@ -1,32 +1,46 @@
-# General
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.DS_Store
+.Python
+*.egg
+*.egg-info/
 
-# Virtual Environment
+# Virtual Environment / uv
 venv/
 .venv/
 env/
 .env
+.envrc
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
 
 # Streamlit
 .streamlit/secrets.toml
 
-# IDEs
+# IDEs / Editors
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # Distribution / Builds
 build/
 dist/
-*.egg-info/
 
 # Claude Code — personal settings のみ除外（.claude/skills/ は公開アセット）
 .claude/settings.json
 .claude/settings.local.json
 .claude/claude_desktop_config.json
+
+# Serena ローカル状態
+.serena/
 
 # Gemini/Antigravity specific
 .gemini/
@@ -37,12 +51,14 @@ output/
 # バックアップ・テンポラリ
 *.bak
 *.orig
-*~
-*.swp
-*.swo
 
 # テストデータ
 test_data/
 
+# APOLLO Private データマウント先
+apollo-data/
+/var/lib/apollo/
+
 # OS固有
+.DS_Store
 Thumbs.db

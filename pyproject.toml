@@ -1,0 +1,54 @@
+[project]
+name = "apollo-patent-analysis"
+version = "7.0.0+private.2"
+description = "APOLLO v7 — Advanced Patent & Overall Landscape-analytics Logic Orbiter (Private Edition)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Minoru Tomobe (jl1nie)" }]
+
+# コア依存: hosted / private どちらのモードでも必要なもの。
+# 値は requirements.txt (HF Spaces 用) と一致させる必要がある。
+# patiroha[all] が SBERT / Janome / UMAP / HDBSCAN / NetworkX 等を内部で引くので
+# v6 のように [hosted] / [private] で torch 系を分離することはできない。
+dependencies = [
+    "streamlit==1.41.1",
+    "patiroha[all]",
+    "numpy<2.0.0",
+    "setuptools",
+    "sentence-transformers>=3.0,<4",
+    "transformers>=4.44,<5",
+    "plotly",
+    "matplotlib",
+    "wordcloud==1.9.4",
+    "openpyxl",
+    "kaleido",
+    "python-pptx",
+    "python-docx",
+    "Pillow",
+    "requests",
+    "google-generativeai",
+]
+
+[project.optional-dependencies]
+# private モード追加依存: LM Studio (OpenAI 互換) + 認証
+private = [
+    "openai>=1.40.0",
+    "streamlit-authenticator>=0.3.2",
+    "bcrypt",
+    "PyYAML",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = [".venv", "apollo-data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

@@ -5,6 +5,11 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ['OMP_NUM_THREADS'] = '1'
 
+# APOLLO Private: モード分岐フックを最早期に適用 (hosted モードでは no-op)
+import apollo_bootstrap
+apollo_bootstrap.init()
+import apollo_config
+
 # ==================================================================
 # --- ライブラリ ---
 # ==================================================================
@@ -91,7 +96,10 @@ def smart_map_index(current_value, options, keywords):
 
 utils.render_sidebar()
 
-st.title("🛰️ Mission Control") 
+st.title("🛰️ Mission Control")
+# APOLLO Private Track J: アクティブプロジェクト banner (hosted モードでは no-op)
+from services.private_ui import render_project_banner
+render_project_banner()
 st.markdown("ここは、全分析モジュールで共通のデータ準備を行う「ミッション・コントロール（データハブ）」です。")
 
 # --- アプリケーション初期化 ---
@@ -136,6 +144,11 @@ with container:
     # A-1. ファイルアップロード
     with tab1:
         st.markdown("##### 分析対象の特許リストをインポートしてください。")
+
+        # APOLLO Private: サーバ保存ファイルから読み込む UI (hosted では no-op)
+        from services.private_ui import render_patent_picker_section, persist_uploaded_file, persist_analysis_state
+        render_patent_picker_section()
+
         uploaded_file = st.file_uploader(
             "分析ファイルをアップロード (CSV または Excel)",
             type=["csv", "xlsx", "xls"],
@@ -144,6 +157,7 @@ with container:
         )
 
         if uploaded_file is not None:
+            persist_uploaded_file(uploaded_file)  # APOLLO Private: named volume に保存 (hosted は no-op)
             # 前処理完了後のrerunでは再読み込みをスキップ（新ファイルの場合のみ実行）
             is_new_file = (uploaded_file.name != st.session_state.get('filename', ''))
             if is_new_file or not st.session_state.get('preprocess_done', False):
@@ -249,6 +263,10 @@ with container:
                 else:
                     # --- OpenALEX検索 ---
                     st.markdown("OpenAlex APIで学術論文を直接検索してデータセットに追加します。")
+
+                    # APOLLO Private: エアギャップ環境では外部 API 接続注意 (dismiss 可・ブロックはしない)
+                    import services.airgap as _airgap
+                    _airgap.show_external_api_notice("openalex")
 
                     oalex_query = st.text_area(
                         "検索キーワード（1行1クエリ、複数行でOR検索）",
@@ -943,7 +961,7 @@ with container:
         st.markdown("##### 全モジュール共通の分析エンジンを起動します。")
         st.write("データ量に応じて数分かかる場合があります。")
 
-        if st.button("分析エンジン起動 (SBERT/TF-IDF)", type="primary", key="run_preprocess"):
+        if st.button(f"分析エンジン起動 ({apollo_config.EMBEDDER_LABEL}/TF-IDF)", type="primary", key="run_preprocess"):
             required_cols = ['title', 'abstract', 'claim', 'app_num', 'date', 'applicant', 'ipc']
             
             if st.session_state.df_main is None:
@@ -1061,15 +1079,15 @@ with container:
 
                     update_progress('text', 1.0)
 
-                    # 4. SBERTエンコード (Patent ONLY) — patiroha.SBERTEmbedder
-                    status_text.markdown("🔄 **Phase 4/6: AIベクトル化 (SBERT - 特許のみ)...**")
+                    # 4. AI 埋め込み (Patent ONLY) — patiroha.SBERTEmbedder (private モードでは LM Studio シム)
+                    status_text.markdown(f"🔄 **Phase 4/6: AIベクトル化 ({apollo_config.EMBEDDER_LABEL} - 特許のみ)...**")
                     embedder = load_sbert_embedder()
 
                     def sbert_progress(frac):
                         el_str, et_str = update_progress('sbert', frac)
                         pct = int(frac * 100)
                         status_text.markdown(
-                            f"🔄 **Phase 4/6: AIベクトル化 (SBERT) 実行中...** ({pct}%)\n\n"
+                            f"🔄 **Phase 4/6: AIベクトル化 ({apollo_config.EMBEDDER_LABEL}) 実行中...** ({pct}%)\n\n"
                             f"⏱️ 経過: {el_str} | ⏳ 残り: {et_str} (目安)")
 
                     sbert_embeddings = embedder.encode(
@@ -1143,10 +1161,13 @@ with container:
                     # クリーンアップ
                     status_text.markdown("🔄 **Phase 6/6: 最終処理中...**")
                     df.drop(columns=['text_for_sbert'], errors='ignore', inplace=True)
-                    st.session_state.df_main = df 
-                    st.session_state.shared_df = df 
+                    st.session_state.df_main = df
+                    st.session_state.shared_df = df
                     st.session_state.preprocess_done = True
                     update_progress('clean', 1.0)
+
+                    # APOLLO Private: 前処理結果を pickle 保存 (hosted は no-op)
+                    persist_analysis_state(df, sbert_embeddings, tfidf_matrix, feature_names, col_map, delimiters)
                     
                     # 完了
                     progress_bar.progress(1.0)

@@ -1,0 +1,12 @@
+[theme]
+# APOLLO のライトテーマ用固定 (OS ダークモードに追従させない)
+# utils.render_sidebar の <style> 注入と整合させる
+base = "light"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9fa"
+textColor = "#333333"
+primaryColor = "#003366"
+
+[server]
+# WSL で file watcher がちらつくことがあるので polling に固定
+fileWatcherType = "poll"
